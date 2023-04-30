@@ -1,0 +1,26 @@
+[package]
+name = "pipar-contract-factory"
+version = "0.1.0"
+authors = ["pipar.xyz"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+near-sdk = "4.0.0"
+uint = { version = "0.9.3", default-features = false }
+smartcore = {version = "0.2.1", features=["serde"]}
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+
+[workspace]
+members = []
