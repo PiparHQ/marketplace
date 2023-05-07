@@ -1,6 +1,6 @@
 extern crate uuid;
-use near_sdk::{self, assert_one_yocto, collections::{LookupSet, LookupMap, Vector}, borsh::{self, BorshDeserialize, BorshSerialize}, PublicKey, Balance};
-use near_sdk::{ext_contract, env, log, near_bindgen, AccountId, Gas, Promise, PromiseError, PanicOnDefault, json_types::U128, is_promise_success,};
+use near_sdk::{self, collections::{LookupSet, Vector}, borsh::{self, BorshDeserialize, BorshSerialize}, PublicKey, Balance};
+use near_sdk::{env, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, json_types::U128, is_promise_success,};
 use serde::{Serialize, Deserialize};
 use serde_json;
 use uuid::Uuid;
@@ -25,7 +25,7 @@ pub struct Transaction {
     store_contract_id: AccountId,
     buyer_contract_id: AccountId,
     buyer_value_locked: u128,
-    product_quantity: u32,
+    product_quantity: u128,
     is_discount: bool,
     is_reward: bool,
     approved: bool,
@@ -70,7 +70,7 @@ pub struct Metadata {
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct FtData {
-    owner_id: AccountId,
+    owner_id: String,
     contract_id: AccountId,
 }
 
@@ -111,13 +111,13 @@ impl PiparContractFactory {
     }
 
     #[payable]
-    pub fn create_account(&mut self, new_account_id: AccountId, new_public_key: PublicKey, keypom_args: KeypomArgs) -> Promise {
+    pub fn create_account(&mut self, new_account_id: String, new_public_key: PublicKey, keypom_args: KeypomArgs) -> Promise {
         let prefix = &new_account_id[0..new_account_id.len()-8];
         let public_key: PublicKey = new_public_key;
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
-            owner_id: new_account_id,
+            owner_id: new_account_id.clone(),
             contract_id: env::current_account_id()
         })
             .unwrap();
@@ -132,11 +132,22 @@ impl PiparContractFactory {
                 Self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))
                     .deploy_store_keypom_callback(
-                        &new_account_id,
-                        &prefix,
-                        env::attached_deposit().into(),
+                        prefix.to_string(),
                     )
             )
+    }
+
+    #[private]
+    pub fn deploy_store_keypom_callback(
+        &mut self,
+        prefix: String,
+    ) {
+        if is_promise_success() {
+            self.stores.insert(&prefix);
+            env::log_str("Successful token deployment")
+        } else {
+            env::log_str("failed token deployment & funds returned")
+        }
     }
 
     #[private]
@@ -164,13 +175,13 @@ impl PiparContractFactory {
             "To cover the storage required for your store, you need to attach at least {} yoctoNEAR to this transaction.",
             STORE_BALANCE
         );
-        self.assert_no_store_with_id(prefix);
-        assert_ne!(&prefix, "market");
-        assert_ne!(&prefix, "pipar");
+        self.assert_no_store_with_id(prefix.clone());
+        assert_ne!(prefix.clone(), "market");
+        assert_ne!(prefix.clone(), "pipar");
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
-            owner_id: env::signer_account_id(),
+            owner_id: env::signer_account_id().to_string(),
             contract_id: env::current_account_id()
         })
             .unwrap();
@@ -186,7 +197,7 @@ impl PiparContractFactory {
                     .with_static_gas(Gas(5*TGAS))
                     .deploy_store_callback(
                         env::signer_account_id(),
-                        &prefix,
+                        prefix.clone(),
                         env::attached_deposit().into(),
                     )
             )
@@ -200,11 +211,16 @@ impl PiparContractFactory {
         is_discount: bool,
         is_reward: bool,
     ) -> Promise {
-        match self.transactions.iter().position(|t| t.product_id == product_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id()).unwrap() {
+        let check_existing = self.transactions
+            .iter()
+            .position(|t| t.product_id == product_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id())
+            .unwrap();
+
+        match self.transactions.get(check_existing as u64) {
             Some(t) => panic!("Cannot escrow buy twice on the same product with the same seller, you must complete one first: {:?}", t),
             None => {
                 let args = serde_json::to_vec(&Buy {
-                    product_id: product_id,
+                    product_id: product_id.clone(),
                     buyer_account_id: env::predecessor_account_id(),
                     attached_near: env::attached_deposit(),
                 })
@@ -216,11 +232,11 @@ impl PiparContractFactory {
                             .buy_callback(
                                 env::predecessor_account_id(),
                                 env::attached_deposit(),
-                                &product_id,
-                                &store_contract_id,
-                                &product_quantity,
-                                &is_discount,
-                                &is_reward,
+                                product_id.clone(),
+                                store_contract_id,
+                                product_quantity,
+                                is_discount,
+                                is_reward,
                             )
                     )
             }
@@ -231,10 +247,10 @@ impl PiparContractFactory {
     pub fn buy_callback(
         &mut self,
         buyer_account_id: AccountId,
-        attached_deposit: U128,
+        attached_deposit: u128,
         product_id: String,
         store_contract_id: AccountId,
-        product_quantity: u32,
+        product_quantity: u128,
         is_discount: bool,
         is_reward: bool,
     ) {
@@ -262,6 +278,54 @@ impl PiparContractFactory {
             Promise::new(buyer_account_id)
                 .transfer(attached_deposit);
             env::log_str("Product purchase failed, returning funds")
+        }
+    }
+
+    pub fn complete_purchase(
+        &mut self,
+        transaction_id: String,
+        store_contract_id: String,
+    ) -> Promise {
+        let check_existing = self.transactions
+            .iter()
+            .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
+            .unwrap();
+
+        match self.transactions.get(check_existing as u64) {
+            Some(t) => {
+                if (t.is_reward == true) {
+                    Promise::new(store_contract_id.clone())
+                        .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .complete_purchase_callback(
+                                    env::predecessor_account_id(),
+                                    env::attached_deposit(),
+                                    product_id.clone(),
+                                    store_contract_id,
+                                    product_quantity,
+                                    is_discount,
+                                    is_reward,
+                                )
+                        )
+                } else {
+                    Promise::new(env::current_account_id())
+                        .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .complete_purchase_callback(
+                                    env::predecessor_account_id(),
+                                    env::attached_deposit(),
+                                    product_id.clone(),
+                                    store_contract_id,
+                                    product_quantity,
+                                    is_discount,
+                                    is_reward,
+                                )
+                        )
+                }
+            }
+            None => panic!("Cannot complete product at this time, please try again later"),
         }
     }
 
