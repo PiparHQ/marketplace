@@ -1,6 +1,6 @@
 extern crate uuid;
 use near_sdk::{self, collections::{LookupSet, Vector}, borsh::{self, BorshDeserialize, BorshSerialize}, PublicKey, Balance};
-use near_sdk::{env, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, json_types::U128, is_promise_success,};
+use near_sdk::{env, near_bindgen, assert_one_yocto, AccountId, Gas, Promise, PanicOnDefault, json_types::U128, is_promise_success,};
 use serde::{Serialize, Deserialize};
 use serde_json;
 use uuid::Uuid;
@@ -33,6 +33,8 @@ pub struct Transaction {
     delivered: bool,
     disputed: bool,
     canceled: bool,
+    hashed_billing_address: String,
+    nonce: String,
     time_created: u64,
 }
 
@@ -75,11 +77,44 @@ pub struct FtData {
 }
 
 #[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+pub struct TokenData {
+    product_id: String,
+    quantity: u128,
+    buyer_account_id: AccountId,
+}
+
+#[near_bindgen]
 impl PiparContractFactory {
     pub fn assert_no_store_with_id(&self, store_id: String) {
         assert!(
             !self.check_contains_store(store_id),
             "Store with that ID already exists"
+        );
+    }
+
+    pub fn assert_only_buyer(&self, buyer_account_id: AccountId) {
+        assert_one_yocto();
+        assert_eq!(
+            env::signer_account_id(),
+            buyer_account_id,
+            "Only transaction buyer can call this method"
+        )
+    }
+
+    pub fn assert_only_seller(&self, store_account_id: AccountId) {
+        assert_one_yocto();
+        assert_eq!(
+            env::signer_account_id(),
+            store_account_id,
+            "Only transaction seller can call this method"
+        )
+    }
+
+    pub fn account_is_valid(&self, account_id: AccountId) {
+        assert!(
+            env::is_valid_account_id(account_id.as_bytes()),
+            "Account is invalid"
         );
     }
 
@@ -89,6 +124,16 @@ impl PiparContractFactory {
 
     pub fn get_store_cost(&self) -> U128 {
         self.store_cost.into()
+    }
+
+    pub fn get_transaction_count(&self) -> usize {
+        self.transactions.iter().count()
+    }
+
+    pub fn get_all_transactions(&self) {
+        let num: usize = self.transactions.iter().count();
+        let transactions = self.transactions.iter().take(num);
+        println!("{:?}", transactions)
     }
 
     /// Initialization
@@ -176,6 +221,7 @@ impl PiparContractFactory {
             STORE_BALANCE
         );
         self.assert_no_store_with_id(prefix.clone());
+        self.account_is_valid(prefix.xlone());
         assert_ne!(prefix.clone(), "market");
         assert_ne!(prefix.clone(), "pipar");
         let current_account = env::current_account_id().to_string();
@@ -207,9 +253,11 @@ impl PiparContractFactory {
         &mut self,
         product_id: String,
         store_contract_id: AccountId,
-        product_quantity: u32,
+        product_quantity: u128,
         is_discount: bool,
         is_reward: bool,
+        hashed_billing_address: String,
+        nonce: String,
     ) -> Promise {
         let check_existing = self.transactions
             .iter()
@@ -237,6 +285,8 @@ impl PiparContractFactory {
                                 product_quantity,
                                 is_discount,
                                 is_reward,
+                                hashed_billing_address,
+                                nonce,
                             )
                     )
             }
@@ -253,6 +303,8 @@ impl PiparContractFactory {
         product_quantity: u128,
         is_discount: bool,
         is_reward: bool,
+        hashed_billing_address: String,
+        nonce: String,
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
@@ -271,6 +323,8 @@ impl PiparContractFactory {
                 delivered: false,
                 disputed: false,
                 canceled: false,
+                hashed_billing_address: hashed_billing_address,
+                nonce: nonce,
                 time_created: env::block_timestamp(),
             });
             env::log_str("Successful purchased product")
@@ -284,49 +338,114 @@ impl PiparContractFactory {
     pub fn complete_purchase(
         &mut self,
         transaction_id: String,
-        store_contract_id: String,
+        store_contract_id: AccountId,
     ) -> Promise {
         let check_existing = self.transactions
             .iter()
             .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
             .unwrap();
 
-        match self.transactions.get(check_existing as u64) {
+        match self.transactions.get(&check_existing as u64) {
             Some(t) => {
                 if (t.is_reward == true) {
+                    let args = serde_json::to_vec(&TokenData {
+                        product_id: t.product_id,
+                        quantity: t.product_quantity,
+                        buyer_account_id: env::current_account_id(),
+                    })
+                        .unwrap();
                     Promise::new(store_contract_id.clone())
-                        .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                        .function_call("reward_with_token".to_owned(), args, NO_DEPOSIT, PGAS)
                         .then(
                             Self::ext(env::current_account_id())
                                 .complete_purchase_callback(
-                                    env::predecessor_account_id(),
-                                    env::attached_deposit(),
-                                    product_id.clone(),
-                                    store_contract_id,
-                                    product_quantity,
-                                    is_discount,
-                                    is_reward,
+                                    transaction_id.clone(),
+                                    &check_existing as u64,
                                 )
                         )
                 } else {
                     Promise::new(env::current_account_id())
-                        .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
-                        .then(
-                            Self::ext(env::current_account_id())
-                                .complete_purchase_callback(
-                                    env::predecessor_account_id(),
-                                    env::attached_deposit(),
-                                    product_id.clone(),
-                                    store_contract_id,
-                                    product_quantity,
-                                    is_discount,
-                                    is_reward,
-                                )
+                        .complete_purchase_callback(
+                            transaction_id.clone(),
+                            &check_existing as u64,
                         )
                 }
             }
-            None => panic!("Cannot complete product at this time, please try again later"),
+            None => panic!("Cannot complete transaction at this time, please try again later"),
         }
+    }
+
+    #[private]
+    pub fn complete_purchase_callback(
+        &mut self,
+        check_existing: u64,
+    ) {
+        if is_promise_success() {
+            match self.transactions.get(&check_existing as u64) {
+                Some(t) => {
+                        self.transactions.replace(check_existing, &Transaction {
+                            transaction_id: t.transaction_id,
+                            product_id: t.product_id,
+                            store_contract_id: t.store_contract_id,
+                            buyer_contract_id: t.buyer_contract_id,
+                            buyer_value_locked: t.buyer_value_locked,
+                            product_quantity: t.product_quantity,
+                            is_discount: t.is_discount,
+                            is_reward: t.is_reward,
+                            approved: t.approved,
+                            shipped: t.shipped,
+                            delivered: true,
+                            disputed: t.disputed,
+                            canceled: t.canceled,
+                            hashed_billing_address: t.hashed_billing_address,
+                            nonce: t.nonce,
+                            time_created: t.time_created,
+                        });
+                    Promise::new(t.store_contract_id.clone())
+                        .transfer(t.buyer_value_locked);
+                    env::log_str("Successful transaction completion")
+                }
+                None => panic!("Transaction not found"),
+            }
+        } else {
+            env::log_str("Product purchase failed, returning funds")
+        }
+    }
+
+    pub fn dispute_purchase(
+        &mut self,
+        transaction_id: String,
+        store_contract_id: AccountId,
+    ) {
+        let check_existing = self.transactions
+            .iter()
+            .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
+            .unwrap();
+
+            match self.transactions.get(check_existing as u64) {
+                Some(t) => {
+                    self.transactions.replace(check_existing as u64, &Transaction {
+                        transaction_id: t.transaction_id,
+                        product_id: t.product_id,
+                        store_contract_id: t.store_contract_id,
+                        buyer_contract_id: t.buyer_contract_id,
+                        buyer_value_locked: t.buyer_value_locked,
+                        product_quantity: t.product_quantity,
+                        is_discount: t.is_discount,
+                        is_reward: t.is_reward,
+                        approved: t.approved,
+                        shipped: t.shipped,
+                        delivered: t.delivered,
+                        disputed: false,
+                        canceled: t.canceled,
+                        hashed_billing_address: t.hashed_billing_address,
+                        nonce: t.nonce,
+                        time_created: t.time_created,
+                    });
+                    env::log_str("Transaction has been marked disputed")
+                }
+                None => panic!("Transaction not found"),
+            }
     }
 
 }
