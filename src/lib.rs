@@ -4,7 +4,6 @@ use near_sdk::{env, near_bindgen, assert_one_yocto, AccountId, Gas, Promise, Pan
 use serde::{Serialize, Deserialize};
 use serde_json;
 use uuid::Uuid;
-use std::fmt;
 
 // Constants
 pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
@@ -18,7 +17,7 @@ pub const fn tgas(n: u64) -> Gas {
 pub const PGAS: Gas = tgas(65 + 5);
 
 #[near_bindgen]
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, fmt::Debug)]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
 pub struct Transaction {
     transaction_id: String,
     product_id: String,
@@ -111,11 +110,13 @@ impl PiparContractFactory {
         )
     }
 
-    pub fn account_is_valid(&self, account_id: AccountId) {
+    pub fn account_name_is_valid(&self, prefix: String) {
+        let current_account = env::current_account_id().to_string();
+        let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         assert!(
-            env::is_valid_account_id(account_id.as_bytes()),
+            env::is_valid_account_id(subaccount.as_bytes()),
             "Account is invalid"
-        );
+        )
     }
 
     pub fn check_contains_store(&self, store_id: String) -> bool {
@@ -131,9 +132,28 @@ impl PiparContractFactory {
     }
 
     pub fn get_all_transactions(&self) {
-        let num: usize = self.transactions.iter().count();
-        let transactions = self.transactions.iter().take(num);
-        println!("{:?}", transactions)
+        // let num: usize = self.transactions.iter().count();
+        // let transactions = self.transactions.iter().take(num);
+        // println!("{:?}", transactions)
+        for t in self.transactions.iter() {
+            println!("{:?}", t)
+        }
+    }
+
+    pub fn get_buyer_transactions(&self, account_id: AccountId) {
+        for t in self.transactions.iter() {
+            if t.buyer_contract_id == account_id {
+                println!("{:?}", t)
+            }
+        }
+    }
+
+    pub fn get_seller_transactions(&self, account_id: AccountId) {
+        for t in self.transactions.iter() {
+            if t.store_contract_id == account_id {
+                println!("{:?}", t)
+            }
+        }
     }
 
     /// Initialization
@@ -159,6 +179,7 @@ impl PiparContractFactory {
     pub fn create_account(&mut self, new_account_id: String, new_public_key: PublicKey, keypom_args: KeypomArgs) -> Promise {
         let prefix = &new_account_id[0..new_account_id.len()-8];
         let public_key: PublicKey = new_public_key;
+        let _keypom = keypom_args;
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
@@ -221,7 +242,7 @@ impl PiparContractFactory {
             STORE_BALANCE
         );
         self.assert_no_store_with_id(prefix.clone());
-        self.account_is_valid(prefix.xlone());
+        self.account_name_is_valid(prefix.clone());
         assert_ne!(prefix.clone(), "market");
         assert_ne!(prefix.clone(), "pipar");
         let current_account = env::current_account_id().to_string();
@@ -345,9 +366,9 @@ impl PiparContractFactory {
             .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
             .unwrap();
 
-        match self.transactions.get(&check_existing as u64) {
+        match self.transactions.get(check_existing as u64) {
             Some(t) => {
-                if (t.is_reward == true) {
+                if t.is_reward == true {
                     let args = serde_json::to_vec(&TokenData {
                         product_id: t.product_id,
                         quantity: t.product_quantity,
@@ -359,15 +380,16 @@ impl PiparContractFactory {
                         .then(
                             Self::ext(env::current_account_id())
                                 .complete_purchase_callback(
-                                    transaction_id.clone(),
-                                    &check_existing as u64,
+                                    check_existing as u64,
                                 )
                         )
                 } else {
                     Promise::new(env::current_account_id())
-                        .complete_purchase_callback(
-                            transaction_id.clone(),
-                            &check_existing as u64,
+                        .then(
+                            Self::ext(env::current_account_id())
+                                .complete_purchase_callback(
+                                    check_existing as u64,
+                                )
                         )
                 }
             }
@@ -381,13 +403,13 @@ impl PiparContractFactory {
         check_existing: u64,
     ) {
         if is_promise_success() {
-            match self.transactions.get(&check_existing as u64) {
+            match self.transactions.get(check_existing as u64) {
                 Some(t) => {
                         self.transactions.replace(check_existing, &Transaction {
                             transaction_id: t.transaction_id,
                             product_id: t.product_id,
-                            store_contract_id: t.store_contract_id,
-                            buyer_contract_id: t.buyer_contract_id,
+                            store_contract_id: t.store_contract_id.clone(),
+                            buyer_contract_id: t.buyer_contract_id.clone(),
                             buyer_value_locked: t.buyer_value_locked,
                             product_quantity: t.product_quantity,
                             is_discount: t.is_discount,
@@ -401,7 +423,7 @@ impl PiparContractFactory {
                             nonce: t.nonce,
                             time_created: t.time_created,
                         });
-                    Promise::new(t.store_contract_id.clone())
+                    Promise::new(t.store_contract_id)
                         .transfer(t.buyer_value_locked);
                     env::log_str("Successful transaction completion")
                 }
