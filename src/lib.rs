@@ -1,7 +1,15 @@
 extern crate uuid;
-use near_sdk::{self, collections::{LookupSet, Vector}, borsh::{self, BorshDeserialize, BorshSerialize}, PublicKey, Balance};
-use near_sdk::{env, near_bindgen, assert_one_yocto, AccountId, Gas, Promise, PanicOnDefault, json_types::U128, is_promise_success,};
-use serde::{Serialize, Deserialize};
+use near_sdk::{
+    self,
+    borsh::{self, BorshDeserialize, BorshSerialize},
+    collections::{LookupSet, Vector},
+    Balance, PublicKey,
+};
+use near_sdk::{
+    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas,
+    PanicOnDefault, Promise,
+};
+use serde::{Deserialize, Serialize};
 use serde_json;
 use uuid::Uuid;
 
@@ -42,7 +50,7 @@ pub struct Transaction {
 pub struct PiparContractFactory {
     pub stores: LookupSet<String>,
     pub transactions: Vector<Transaction>,
-    pub store_cost: u128
+    pub store_cost: u128,
 }
 
 #[near_bindgen]
@@ -59,7 +67,7 @@ pub struct KeypomArgs {
 pub struct Buy {
     product_id: String,
     buyer_account_id: AccountId,
-    attached_near: Balance
+    attached_near: Balance,
 }
 
 #[near_bindgen]
@@ -164,7 +172,7 @@ impl PiparContractFactory {
         Self {
             stores: LookupSet::new(b"t".to_vec()),
             transactions: Vector::new(b"vec-uid-1".to_vec()),
-            store_cost: STORE_BALANCE
+            store_cost: STORE_BALANCE,
         }
     }
 
@@ -176,17 +184,22 @@ impl PiparContractFactory {
     }
 
     #[payable]
-    pub fn create_account(&mut self, new_account_id: String, new_public_key: PublicKey, keypom_args: KeypomArgs) -> Promise {
-        let prefix = &new_account_id[0..new_account_id.len()-8];
+    pub fn create_account(
+        &mut self,
+        new_account_id: String,
+        new_public_key: PublicKey,
+        keypom_args: KeypomArgs,
+    ) -> Promise {
+        let prefix = &new_account_id[0..new_account_id.len() - 8];
         let public_key: PublicKey = new_public_key;
         let _keypom = keypom_args;
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
             owner_id: new_account_id.clone(),
-            contract_id: env::current_account_id()
+            contract_id: env::current_account_id(),
         })
-            .unwrap();
+        .unwrap();
 
         Promise::new(subaccount.clone())
             .create_account()
@@ -196,18 +209,13 @@ impl PiparContractFactory {
             .function_call("new".to_owned(), init_args, NO_DEPOSIT, PGAS)
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(Gas(5*TGAS))
-                    .deploy_store_keypom_callback(
-                        prefix.to_string(),
-                    )
+                    .with_static_gas(Gas(5 * TGAS))
+                    .deploy_store_keypom_callback(prefix.to_string()),
             )
     }
 
     #[private]
-    pub fn deploy_store_keypom_callback(
-        &mut self,
-        prefix: String,
-    ) {
+    pub fn deploy_store_keypom_callback(&mut self, prefix: String) {
         if is_promise_success() {
             self.stores.insert(&prefix);
             env::log_str("Successful token deployment")
@@ -228,8 +236,7 @@ impl PiparContractFactory {
             self.stores.insert(&prefix);
             env::log_str("Successful token deployment")
         } else {
-            Promise::new(store_creator_id)
-                .transfer(attached_deposit);
+            Promise::new(store_creator_id).transfer(attached_deposit);
             env::log_str("failed token deployment & funds returned")
         }
     }
@@ -249,9 +256,9 @@ impl PiparContractFactory {
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
             owner_id: env::signer_account_id().to_string(),
-            contract_id: env::current_account_id()
+            contract_id: env::current_account_id(),
         })
-            .unwrap();
+        .unwrap();
 
         Promise::new(subaccount.clone())
             .create_account()
@@ -261,12 +268,12 @@ impl PiparContractFactory {
             .function_call("new".to_owned(), init_args, NO_DEPOSIT, PGAS)
             .then(
                 Self::ext(env::current_account_id())
-                    .with_static_gas(Gas(5*TGAS))
+                    .with_static_gas(Gas(5 * TGAS))
                     .deploy_store_callback(
                         env::signer_account_id(),
                         prefix.clone(),
                         env::attached_deposit().into(),
-                    )
+                    ),
             )
     }
 
@@ -280,9 +287,14 @@ impl PiparContractFactory {
         hashed_billing_address: String,
         nonce: String,
     ) -> Promise {
-        let check_existing = self.transactions
+        let check_existing = self
+            .transactions
             .iter()
-            .position(|t| t.product_id == product_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id())
+            .position(|t| {
+                t.product_id == product_id
+                    && t.store_contract_id == store_contract_id
+                    && t.buyer_contract_id == env::predecessor_account_id()
+            })
             .unwrap();
 
         match self.transactions.get(check_existing as u64) {
@@ -350,8 +362,7 @@ impl PiparContractFactory {
             });
             env::log_str("Successful purchased product")
         } else {
-            Promise::new(buyer_account_id)
-                .transfer(attached_deposit);
+            Promise::new(buyer_account_id).transfer(attached_deposit);
             env::log_str("Product purchase failed, returning funds")
         }
     }
@@ -361,9 +372,19 @@ impl PiparContractFactory {
         transaction_id: String,
         store_contract_id: AccountId,
     ) -> Promise {
-        let check_existing = self.transactions
+        let check_existing = self
+            .transactions
             .iter()
-            .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
+            .position(|t| {
+                t.transaction_id == transaction_id
+                    && t.store_contract_id == store_contract_id
+                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.approved == true
+                    && t.shipped == true
+                    && t.delivered == false
+                    && t.disputed == false
+                    && t.canceled == false
+            })
             .unwrap();
 
         match self.transactions.get(check_existing as u64) {
@@ -374,23 +395,18 @@ impl PiparContractFactory {
                         quantity: t.product_quantity,
                         buyer_account_id: env::current_account_id(),
                     })
-                        .unwrap();
+                    .unwrap();
                     Promise::new(store_contract_id.clone())
                         .function_call("reward_with_token".to_owned(), args, NO_DEPOSIT, PGAS)
                         .then(
                             Self::ext(env::current_account_id())
-                                .complete_purchase_callback(
-                                    check_existing as u64,
-                                )
+                                .complete_purchase_callback(check_existing as u64),
                         )
                 } else {
-                    Promise::new(env::current_account_id())
-                        .then(
-                            Self::ext(env::current_account_id())
-                                .complete_purchase_callback(
-                                    check_existing as u64,
-                                )
-                        )
+                    Promise::new(env::current_account_id()).then(
+                        Self::ext(env::current_account_id())
+                            .complete_purchase_callback(check_existing as u64),
+                    )
                 }
             }
             None => panic!("Cannot complete transaction at this time, please try again later"),
@@ -398,14 +414,13 @@ impl PiparContractFactory {
     }
 
     #[private]
-    pub fn complete_purchase_callback(
-        &mut self,
-        check_existing: u64,
-    ) {
+    pub fn complete_purchase_callback(&mut self, check_existing: u64) {
         if is_promise_success() {
             match self.transactions.get(check_existing as u64) {
                 Some(t) => {
-                        self.transactions.replace(check_existing, &Transaction {
+                    self.transactions.replace(
+                        check_existing,
+                        &Transaction {
                             transaction_id: t.transaction_id,
                             product_id: t.product_id,
                             store_contract_id: t.store_contract_id.clone(),
@@ -422,9 +437,9 @@ impl PiparContractFactory {
                             hashed_billing_address: t.hashed_billing_address,
                             nonce: t.nonce,
                             time_created: t.time_created,
-                        });
-                    Promise::new(t.store_contract_id)
-                        .transfer(t.buyer_value_locked);
+                        },
+                    );
+                    Promise::new(t.store_contract_id).transfer(t.buyer_value_locked);
                     env::log_str("Successful transaction completion")
                 }
                 None => panic!("Transaction not found"),
@@ -434,19 +449,27 @@ impl PiparContractFactory {
         }
     }
 
-    pub fn dispute_purchase(
-        &mut self,
-        transaction_id: String,
-        store_contract_id: AccountId,
-    ) {
-        let check_existing = self.transactions
+    pub fn dispute_purchase(&mut self, transaction_id: String, store_contract_id: AccountId) {
+        let check_existing = self
+            .transactions
             .iter()
-            .position(|t| t.transaction_id == transaction_id && t.store_contract_id == store_contract_id && t.buyer_contract_id == env::predecessor_account_id() && t.approved == true && t.shipped == true && t.delivered == false && t.disputed == false && t.canceled == false)
+            .position(|t| {
+                t.transaction_id == transaction_id
+                    && t.store_contract_id == store_contract_id
+                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.approved == true
+                    && t.shipped == true
+                    && t.delivered == false
+                    && t.disputed == false
+                    && t.canceled == false
+            })
             .unwrap();
 
-            match self.transactions.get(check_existing as u64) {
-                Some(t) => {
-                    self.transactions.replace(check_existing as u64, &Transaction {
+        match self.transactions.get(check_existing as u64) {
+            Some(t) => {
+                self.transactions.replace(
+                    check_existing as u64,
+                    &Transaction {
                         transaction_id: t.transaction_id,
                         product_id: t.product_id,
                         store_contract_id: t.store_contract_id,
@@ -463,13 +486,11 @@ impl PiparContractFactory {
                         hashed_billing_address: t.hashed_billing_address,
                         nonce: t.nonce,
                         time_created: t.time_created,
-                    });
-                    env::log_str("Transaction has been marked disputed")
-                }
-                None => panic!("Transaction not found"),
+                    },
+                );
+                env::log_str("Transaction has been marked disputed")
             }
+            None => panic!("Transaction not found"),
+        }
     }
-
 }
-
-
