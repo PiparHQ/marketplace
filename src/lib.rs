@@ -1,17 +1,14 @@
-extern crate uuid;
 use near_sdk::{
     self,
     borsh::{self, BorshDeserialize, BorshSerialize},
     collections::{LookupSet, Vector},
     Balance, PublicKey,
 };
+use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::serde_json::{json};
 use near_sdk::{
-    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas,
-    PanicOnDefault, Promise,
+    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas, PanicOnDefault, Promise,
 };
-use serde::{Deserialize, Serialize};
-use serde_json;
-use uuid::Uuid;
 
 // Constants
 pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
@@ -24,7 +21,6 @@ pub const fn tgas(n: u64) -> Gas {
 }
 pub const PGAS: Gas = tgas(65 + 5);
 
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
 pub struct Transaction {
     transaction_id: String,
@@ -45,15 +41,6 @@ pub struct Transaction {
     time_created: u64,
 }
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
-pub struct PiparContractFactory {
-    pub stores: LookupSet<String>,
-    pub transactions: Vector<Transaction>,
-    pub store_cost: u128,
-}
-
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct KeypomArgs {
     account_id_field: Option<String>,
@@ -62,7 +49,6 @@ pub struct KeypomArgs {
     funder_id_field: Option<String>,
 }
 
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct Buy {
     product_id: String,
@@ -70,25 +56,30 @@ pub struct Buy {
     attached_near: Balance,
 }
 
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct Metadata {
     receiver_id: String,
 }
 
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct FtData {
     owner_id: String,
     contract_id: AccountId,
 }
 
-#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct TokenData {
     product_id: String,
     quantity: u128,
     buyer_account_id: AccountId,
+}
+
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+pub struct PiparContractFactory {
+    pub stores: LookupSet<String>,
+    pub transactions: Vector<Transaction>,
+    pub store_cost: u128,
 }
 
 #[near_bindgen]
@@ -164,23 +155,13 @@ impl PiparContractFactory {
         }
     }
 
-    /// Initialization
-    #[init(ignore_state)]
-    #[private]
+    #[init]
     pub fn new() -> Self {
-        assert!(!env::state_exists(), "Already initialized");
         Self {
             stores: LookupSet::new(b"t".to_vec()),
             transactions: Vector::new(b"vec-uid-1".to_vec()),
             store_cost: STORE_BALANCE,
         }
-    }
-
-    #[private]
-    #[init(ignore_state)]
-    pub fn migrate() -> Self {
-        let old = env::state_read().expect("migrating state");
-        Self { ..old }
     }
 
     #[payable]
@@ -341,9 +322,9 @@ impl PiparContractFactory {
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
-            let id = Uuid::new_v4().to_string();
+            let id = env::random_seed();
             self.transactions.push(&Transaction {
-                transaction_id: id,
+                transaction_id: id[0],
                 product_id: product_id,
                 store_contract_id: store_contract_id,
                 buyer_contract_id: buyer_account_id,
