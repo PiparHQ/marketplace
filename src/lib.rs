@@ -21,10 +21,12 @@ pub const fn tgas(n: u64) -> Gas {
 }
 pub const PGAS: Gas = tgas(65 + 5);
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
 pub struct Transaction {
-    transaction_id: String,
-    product_id: String,
+    transaction_id: u64,
+    product_id: u64,
     store_contract_id: AccountId,
     buyer_contract_id: AccountId,
     buyer_value_locked: u128,
@@ -41,7 +43,9 @@ pub struct Transaction {
     time_created: u64,
 }
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct KeypomArgs {
     account_id_field: Option<String>,
     drop_id_field: Option<String>,
@@ -49,27 +53,35 @@ pub struct KeypomArgs {
     funder_id_field: Option<String>,
 }
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct Buy {
-    product_id: String,
+    product_id: u64,
     buyer_account_id: AccountId,
     attached_near: Balance,
 }
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct Metadata {
     receiver_id: String,
 }
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct FtData {
     owner_id: String,
     contract_id: AccountId,
 }
 
+#[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
-    product_id: String,
+    product_id: u64,
     quantity: u128,
     buyer_account_id: AccountId,
 }
@@ -215,10 +227,10 @@ impl PiparContractFactory {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
             self.stores.insert(&prefix);
-            env::log_str("Successful token deployment")
+            env::log_str("Successful store deployment")
         } else {
             Promise::new(store_creator_id).transfer(attached_deposit);
-            env::log_str("failed token deployment & funds returned")
+            env::log_str("failed store deployment & funds returned")
         }
     }
 
@@ -260,7 +272,7 @@ impl PiparContractFactory {
 
     pub fn buy(
         &mut self,
-        product_id: String,
+        product_id: u64,
         store_contract_id: AccountId,
         product_quantity: u128,
         is_discount: bool,
@@ -312,7 +324,7 @@ impl PiparContractFactory {
         &mut self,
         buyer_account_id: AccountId,
         attached_deposit: u128,
-        product_id: String,
+        product_id: u64,
         store_contract_id: AccountId,
         product_quantity: u128,
         is_discount: bool,
@@ -322,9 +334,9 @@ impl PiparContractFactory {
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
-            let id = env::random_seed();
+            let id = env::block_timestamp_ms();
             self.transactions.push(&Transaction {
-                transaction_id: id[0],
+                transaction_id: id,
                 product_id: product_id,
                 store_contract_id: store_contract_id,
                 buyer_contract_id: buyer_account_id,
@@ -350,7 +362,7 @@ impl PiparContractFactory {
 
     pub fn complete_purchase(
         &mut self,
-        transaction_id: String,
+        transaction_id: u64,
         store_contract_id: AccountId,
     ) -> Promise {
         let check_existing = self
@@ -430,7 +442,7 @@ impl PiparContractFactory {
         }
     }
 
-    pub fn dispute_purchase(&mut self, transaction_id: String, store_contract_id: AccountId) {
+    pub fn dispute_purchase(&mut self, transaction_id: u64, store_contract_id: AccountId) {
         let check_existing = self
             .transactions
             .iter()
