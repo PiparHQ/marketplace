@@ -96,6 +96,7 @@ pub struct PiparContractFactory {
 
 #[near_bindgen]
 impl PiparContractFactory {
+
     pub fn assert_no_store_with_id(&self, store_id: String) {
         assert!(
             !self.check_contains_store(store_id),
@@ -170,7 +171,7 @@ impl PiparContractFactory {
     #[init]
     pub fn new() -> Self {
         Self {
-            stores: LookupSet::new(b"t".to_vec()),
+            stores: LookupSet::new(b"set-uid-1".to_vec()),
             transactions: Vector::new(b"vec-uid-1".to_vec()),
             store_cost: STORE_BALANCE,
         }
@@ -412,7 +413,7 @@ impl PiparContractFactory {
             match self.transactions.get(check_existing as u64) {
                 Some(t) => {
                     self.transactions.replace(
-                        check_existing,
+                        check_existing as u64,
                         &Transaction {
                             transaction_id: t.transaction_id,
                             product_id: t.product_id,
@@ -432,7 +433,7 @@ impl PiparContractFactory {
                             time_created: t.time_created,
                         },
                     );
-                    Promise::new(t.store_contract_id).transfer(t.buyer_value_locked);
+                    Promise::new(t.store_contract_id.clone()).transfer(t.buyer_value_locked.into());
                     env::log_str("Successful transaction completion")
                 }
                 None => panic!("Transaction not found"),
