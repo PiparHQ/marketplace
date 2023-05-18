@@ -39,8 +39,7 @@ pub struct Transaction {
     disputed: bool,
     canceled: bool,
     hashed_billing_address: String,
-    nonce: String,
-    time_created: u64,
+    nonce: String
 }
 
 #[near_bindgen]
@@ -135,7 +134,7 @@ impl PiparContractFactory {
         self.stores.contains(&store_id)
     }
 
-    pub fn get_store_cost(&self) -> U128 {
+    pub fn get_store_cost(&self) -> u128 {
         self.store_cost.into()
     }
 
@@ -143,36 +142,29 @@ impl PiparContractFactory {
         self.transactions.iter().count()
     }
 
-    pub fn get_all_transactions(&self) {
-        // let num: usize = self.transactions.iter().count();
-        // let transactions = self.transactions.iter().take(num);
-        // println!("{:?}", transactions)
-        for t in self.transactions.iter() {
-            println!("{:?}", t)
-        }
+    pub fn get_all_transactions(&self) -> Vec<Transaction> {
+        let transactions: Vec<Transaction> = self.transactions.iter().map(|x| x).collect();
+
+        transactions
     }
 
-    pub fn get_buyer_transactions(&self, account_id: AccountId) {
-        for t in self.transactions.iter() {
-            if t.buyer_contract_id == account_id {
-                println!("{:?}", t)
-            }
-        }
+    pub fn get_buyer_transactions(&self, account_id: AccountId) -> Vec<Transaction> {
+        let transactions: Vec<Transaction> = self.transactions.iter().filter(|x| x.buyer_contract_id == account_id).collect();
+
+        transactions
     }
 
-    pub fn get_seller_transactions(&self, account_id: AccountId) {
-        for t in self.transactions.iter() {
-            if t.store_contract_id == account_id {
-                println!("{:?}", t)
-            }
-        }
+    pub fn get_seller_transactions(&self, account_id: AccountId) -> Vec<Transaction> {
+        let transactions: Vec<Transaction> = self.transactions.iter().filter(|x| x.store_contract_id == account_id).collect();
+
+        transactions
     }
 
     #[init]
     pub fn new() -> Self {
         Self {
-            stores: LookupSet::new(b"set-uid-1".to_vec()),
-            transactions: Vector::new(b"vec-uid-1".to_vec()),
+            stores: LookupSet::new(b"s".to_vec()),
+            transactions: Vector::new(b"v".to_vec()),
             store_cost: STORE_BALANCE,
         }
     }
@@ -223,7 +215,7 @@ impl PiparContractFactory {
         &mut self,
         store_creator_id: AccountId,
         prefix: String,
-        attached_deposit: U128,
+        attached_deposit: u128,
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
@@ -289,7 +281,7 @@ impl PiparContractFactory {
                     && t.store_contract_id == store_contract_id
                     && t.buyer_contract_id == env::predecessor_account_id()
             })
-            .unwrap();
+            .unwrap_or_else(|| 11111111);
 
         match self.transactions.get(check_existing as u64) {
             Some(t) => panic!("Cannot escrow buy twice on the same product with the same seller, you must complete one first: {:?}", t),
@@ -335,24 +327,22 @@ impl PiparContractFactory {
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
-            let id = env::block_timestamp_ms();
             self.transactions.push(&Transaction {
-                transaction_id: id,
-                product_id: product_id,
-                store_contract_id: store_contract_id,
+                transaction_id: env::block_timestamp(),
+                product_id,
+                store_contract_id,
                 buyer_contract_id: buyer_account_id,
                 buyer_value_locked: attached_deposit,
-                product_quantity: product_quantity,
-                is_discount: is_discount,
-                is_reward: is_reward,
+                product_quantity,
+                is_discount,
+                is_reward,
                 approved: true,
                 shipped: false,
                 delivered: false,
                 disputed: false,
                 canceled: false,
-                hashed_billing_address: hashed_billing_address,
-                nonce: nonce,
-                time_created: env::block_timestamp(),
+                hashed_billing_address,
+                nonce
             });
             env::log_str("Successful purchased product")
         } else {
@@ -379,7 +369,7 @@ impl PiparContractFactory {
                     && t.disputed == false
                     && t.canceled == false
             })
-            .unwrap();
+            .unwrap_or_else(|| 11111111);
 
         match self.transactions.get(check_existing as u64) {
             Some(t) => {
@@ -387,7 +377,7 @@ impl PiparContractFactory {
                     let args = serde_json::to_vec(&TokenData {
                         product_id: t.product_id,
                         quantity: t.product_quantity,
-                        buyer_account_id: env::current_account_id(),
+                        buyer_account_id: t.buyer_contract_id,
                     })
                     .unwrap();
                     Promise::new(store_contract_id.clone())
@@ -397,7 +387,8 @@ impl PiparContractFactory {
                                 .complete_purchase_callback(check_existing as u64),
                         )
                 } else {
-                    Promise::new(env::current_account_id()).then(
+                    Promise::new(env::current_account_id())
+                        .then(
                         Self::ext(env::current_account_id())
                             .complete_purchase_callback(check_existing as u64),
                     )
@@ -429,8 +420,7 @@ impl PiparContractFactory {
                             disputed: t.disputed,
                             canceled: t.canceled,
                             hashed_billing_address: t.hashed_billing_address,
-                            nonce: t.nonce,
-                            time_created: t.time_created,
+                            nonce: t.nonce
                         },
                     );
                     Promise::new(t.store_contract_id.clone()).transfer(t.buyer_value_locked.into());
@@ -457,7 +447,7 @@ impl PiparContractFactory {
                     && t.disputed == false
                     && t.canceled == false
             })
-            .unwrap();
+            .unwrap_or_else(|| 11111111);
 
         match self.transactions.get(check_existing as u64) {
             Some(t) => {
@@ -478,8 +468,7 @@ impl PiparContractFactory {
                         disputed: false,
                         canceled: t.canceled,
                         hashed_billing_address: t.hashed_billing_address,
-                        nonce: t.nonce,
-                        time_created: t.time_created,
+                        nonce: t.nonce
                     },
                 );
                 env::log_str("Transaction has been marked disputed")
