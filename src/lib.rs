@@ -420,7 +420,7 @@ impl PiparContractFactory {
     #[private]
     pub fn complete_purchase_callback(&mut self, check_existing: u64) {
         if is_promise_success() {
-            match self.transactions.get(check_existing as u64) {
+            match self.transactions.get(&check_existing as u64) {
                 Some(t) => {
                     self.transactions.replace(
                         check_existing as u64,
@@ -472,7 +472,7 @@ impl PiparContractFactory {
             })
             .unwrap_or_else(|| 11111111);
 
-        match self.transactions.get(check_existing as u64) {
+        match self.transactions.get(&check_existing as u64) {
             Some(t) => {
                 self.transactions.replace(
                     check_existing as u64,
