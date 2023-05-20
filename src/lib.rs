@@ -25,21 +25,22 @@ pub const PGAS: Gas = tgas(65 + 5);
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Transaction {
-    transaction_id: U128,
-    product_id: U128,
-    store_contract_id: AccountId,
-    buyer_contract_id: AccountId,
-    buyer_value_locked: U128,
-    product_quantity: U128,
-    is_discount: bool,
-    is_reward: bool,
-    approved: bool,
-    shipped: bool,
-    delivered: bool,
-    disputed: bool,
-    canceled: bool,
-    hashed_billing_address: String,
-    nonce: String
+    pub transaction_id: U128,
+    pub product_id: U128,
+    pub store_contract_id: AccountId,
+    pub buyer_contract_id: AccountId,
+    pub buyer_value_locked: U128,
+    pub product_quantity: U128,
+    pub timeout: U128,
+    pub is_discount: bool,
+    pub is_reward: bool,
+    pub approved: bool,
+    pub shipped: bool,
+    pub delivered: bool,
+    pub disputed: bool,
+    pub canceled: bool,
+    pub hashed_billing_address: String,
+    pub nonce: String
 }
 
 #[near_bindgen]
@@ -129,6 +130,16 @@ impl PiparContractFactory {
             env::is_valid_account_id(subaccount.as_bytes()),
             "Account is invalid"
         )
+    }
+
+    pub fn calculate_timeout(&self, timeout: U128, timestamp: U128) -> u128 {
+        let timeout: u128 = timeout.into();
+        let timestamp: u128 = timestamp.into();
+        let calc_seconds: u128 = timeout * 24 * 60 * 60;
+        let calc_seconds_in_nano: u128 = calc_seconds * 1000000000;
+        let total_timestamp: u128 = timestamp + calc_seconds_in_nano;
+
+        total_timestamp
     }
 
     pub fn check_contains_store(&self, store_id: String) -> bool {
@@ -265,11 +276,13 @@ impl PiparContractFactory {
             )
     }
 
+    #[payable]
     pub fn buy(
         &mut self,
         product_id: U128,
         store_contract_id: AccountId,
         product_quantity: U128,
+        timeout: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
@@ -305,6 +318,7 @@ impl PiparContractFactory {
                                 product_id.clone(),
                                 store_contract_id,
                                 product_quantity,
+                                timeout,
                                 is_discount,
                                 is_reward,
                                 hashed_billing_address,
@@ -323,6 +337,7 @@ impl PiparContractFactory {
         product_id: U128,
         store_contract_id: AccountId,
         product_quantity: U128,
+        timeout: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
@@ -337,6 +352,7 @@ impl PiparContractFactory {
                 buyer_contract_id: buyer_account_id,
                 buyer_value_locked: attached_deposit.into(),
                 product_quantity,
+                timeout,
                 is_discount,
                 is_reward,
                 approved: true,
@@ -415,6 +431,7 @@ impl PiparContractFactory {
                             buyer_contract_id: t.buyer_contract_id.clone(),
                             buyer_value_locked: t.buyer_value_locked,
                             product_quantity: t.product_quantity,
+                            timeout: t.timeout,
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
                             approved: t.approved,
@@ -466,6 +483,7 @@ impl PiparContractFactory {
                         buyer_contract_id: t.buyer_contract_id,
                         buyer_value_locked: t.buyer_value_locked,
                         product_quantity: t.product_quantity,
+                        timeout: t.timeout,
                         is_discount: t.is_discount,
                         is_reward: t.is_reward,
                         approved: t.approved,
@@ -482,4 +500,83 @@ impl PiparContractFactory {
             None => panic!("Transaction not found"),
         }
     }
+
+    pub fn mark_shipped(&mut self, transaction_id: U128, buyer_contract_id: AccountId) {
+        let check_existing = self
+            .transactions
+            .iter()
+            .position(|t| {
+                t.transaction_id == transaction_id
+                    && t.store_contract_id == env::predecessor_account_id()
+                    && t.buyer_contract_id == buyer_contract_id
+                    && t.approved == true
+                    && t.shipped == false
+                    && t.delivered == false
+                    && t.disputed == false
+                    && t.canceled == false
+            })
+            .unwrap_or_else(|| 11111111);
+
+        match self.transactions.get(check_existing as u64) {
+            Some(t) => {
+                self.transactions.replace(
+                    check_existing as u64,
+                    &Transaction {
+                        transaction_id: t.transaction_id,
+                        product_id: t.product_id,
+                        store_contract_id: t.store_contract_id,
+                        buyer_contract_id: t.buyer_contract_id,
+                        buyer_value_locked: t.buyer_value_locked,
+                        product_quantity: t.product_quantity,
+                        timeout: t.timeout,
+                        is_discount: t.is_discount,
+                        is_reward: t.is_reward,
+                        approved: t.approved,
+                        shipped: true,
+                        delivered: t.delivered,
+                        disputed: t.disputed,
+                        canceled: t.canceled,
+                        hashed_billing_address: t.hashed_billing_address,
+                        nonce: t.nonce
+                    },
+                );
+                env::log_str("Transaction has been marked shipped")
+            }
+            None => panic!("Transaction not found"),
+        }
+    }
+
+    pub fn get_refund(&mut self, transaction_id: U128, store_contract_id: AccountId) {
+        let check_existing = self
+            .transactions
+            .iter()
+            .position(|t| {
+                t.transaction_id == transaction_id
+                    && t.store_contract_id == store_contract_id
+                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.approved == true
+                    && t.shipped == false
+                    && t.delivered == false
+                    && t.disputed == false
+                    && t.canceled == false
+            })
+            .unwrap_or_else(|| 11111111);
+
+        match self.transactions.get(check_existing as u64) {
+            Some(t) => {
+                let timeout = self.calculate_timeout(t.timeout, t.transaction_id);
+                let current_timestamp = env::block_timestamp() as u128;
+
+                if current_timestamp >= timeout {
+                    let attached_deposit: u128 = t.buyer_value_locked.into();
+                    env::log_str("Transaction time has elapsed, returning funds to the buyer");
+                    Promise::new(env::predecessor_account_id()).transfer(attached_deposit);
+                } else {
+                    panic!("Transaction time is yet to elapsed, please try again later")
+                }
+            }
+            None => panic!("Transaction not found"),
+        }
+    }
+
 }
