@@ -25,12 +25,12 @@ pub const PGAS: Gas = tgas(65 + 5);
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Transaction {
-    transaction_id: u64,
-    product_id: u64,
+    transaction_id: U128,
+    product_id: U128,
     store_contract_id: AccountId,
     buyer_contract_id: AccountId,
-    buyer_value_locked: u128,
-    product_quantity: u128,
+    buyer_value_locked: U128,
+    product_quantity: U128,
     is_discount: bool,
     is_reward: bool,
     approved: bool,
@@ -56,9 +56,10 @@ pub struct KeypomArgs {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Buy {
-    product_id: u64,
+    product_id: U128,
+    product_quantity: U128,
     buyer_account_id: AccountId,
-    attached_near: Balance,
+    attached_near: U128,
 }
 
 #[near_bindgen]
@@ -72,7 +73,7 @@ pub struct Metadata {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct FtData {
-    owner_id: String,
+    owner_id: AccountId,
     contract_id: AccountId,
 }
 
@@ -80,8 +81,8 @@ pub struct FtData {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
-    product_id: u64,
-    quantity: u128,
+    product_id: U128,
+    quantity: U128,
     buyer_account_id: AccountId,
 }
 
@@ -90,7 +91,7 @@ pub struct TokenData {
 pub struct PiparContractFactory {
     pub stores: LookupSet<String>,
     pub transactions: Vector<Transaction>,
-    pub store_cost: u128,
+    pub store_cost: U128,
 }
 
 #[near_bindgen]
@@ -165,7 +166,7 @@ impl PiparContractFactory {
         Self {
             stores: LookupSet::new(b"s".to_vec()),
             transactions: Vector::new(b"v".to_vec()),
-            store_cost: STORE_BALANCE,
+            store_cost: U128::from(STORE_BALANCE),
         }
     }
 
@@ -182,7 +183,7 @@ impl PiparContractFactory {
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
-            owner_id: new_account_id.clone(),
+            owner_id: new_account_id.parse().unwrap(),
             contract_id: env::current_account_id(),
         })
         .unwrap();
@@ -215,7 +216,7 @@ impl PiparContractFactory {
         &mut self,
         store_creator_id: AccountId,
         prefix: String,
-        attached_deposit: u128,
+        attached_deposit: U128,
     ) {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
@@ -238,10 +239,11 @@ impl PiparContractFactory {
         self.account_name_is_valid(prefix.clone());
         assert_ne!(prefix.clone(), "market");
         assert_ne!(prefix.clone(), "pipar");
+        assert_ne!(prefix.clone(), "dao");
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
-            owner_id: env::signer_account_id().to_string(),
+            owner_id: env::signer_account_id(),
             contract_id: env::current_account_id(),
         })
         .unwrap();
@@ -258,16 +260,16 @@ impl PiparContractFactory {
                     .deploy_store_callback(
                         env::signer_account_id(),
                         prefix.clone(),
-                        env::attached_deposit().into(),
+                        U128::from(env::attached_deposit()),
                     ),
             )
     }
 
     pub fn buy(
         &mut self,
-        product_id: u64,
+        product_id: U128,
         store_contract_id: AccountId,
-        product_quantity: u128,
+        product_quantity: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
@@ -288,8 +290,9 @@ impl PiparContractFactory {
             None => {
                 let args = serde_json::to_vec(&Buy {
                     product_id: product_id.clone(),
+                    product_quantity: product_quantity.clone(),
                     buyer_account_id: env::predecessor_account_id(),
-                    attached_near: env::attached_deposit(),
+                    attached_near: env::attached_deposit().into(),
                 })
                     .unwrap();
                 Promise::new(store_contract_id.clone())
@@ -298,7 +301,7 @@ impl PiparContractFactory {
                         Self::ext(env::current_account_id())
                             .buy_callback(
                                 env::predecessor_account_id(),
-                                env::attached_deposit(),
+                                U128::from(env::attached_deposit()),
                                 product_id.clone(),
                                 store_contract_id,
                                 product_quantity,
@@ -316,10 +319,10 @@ impl PiparContractFactory {
     pub fn buy_callback(
         &mut self,
         buyer_account_id: AccountId,
-        attached_deposit: u128,
-        product_id: u64,
+        attached_deposit: U128,
+        product_id: U128,
         store_contract_id: AccountId,
-        product_quantity: u128,
+        product_quantity: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
@@ -328,11 +331,11 @@ impl PiparContractFactory {
         let attached_deposit: u128 = attached_deposit.into();
         if is_promise_success() {
             self.transactions.push(&Transaction {
-                transaction_id: env::block_timestamp(),
+                transaction_id: U128::from(env::block_timestamp() as u128),
                 product_id,
                 store_contract_id,
                 buyer_contract_id: buyer_account_id,
-                buyer_value_locked: attached_deposit,
+                buyer_value_locked: attached_deposit.into(),
                 product_quantity,
                 is_discount,
                 is_reward,
@@ -353,7 +356,7 @@ impl PiparContractFactory {
 
     pub fn complete_purchase(
         &mut self,
-        transaction_id: u64,
+        transaction_id: U128,
         store_contract_id: AccountId,
     ) -> Promise {
         let check_existing = self
@@ -423,17 +426,20 @@ impl PiparContractFactory {
                             nonce: t.nonce
                         },
                     );
-                    Promise::new(t.store_contract_id.clone()).transfer(t.buyer_value_locked.into());
+                    let payout: u128 = t.buyer_value_locked.into();
+                    let percent = payout as f64 * 0.98;
+                    let seller_funds = percent as u128;
+                    Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
                     env::log_str("Successful transaction completion")
                 }
                 None => panic!("Transaction not found"),
             }
         } else {
-            env::log_str("Product purchase failed, returning funds")
+            env::log_str("Product Purchase Completion failed, returning funds")
         }
     }
 
-    pub fn dispute_purchase(&mut self, transaction_id: u64, store_contract_id: AccountId) {
+    pub fn dispute_purchase(&mut self, transaction_id: U128, store_contract_id: AccountId) {
         let check_existing = self
             .transactions
             .iter()
