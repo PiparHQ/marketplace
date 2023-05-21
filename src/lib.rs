@@ -507,7 +507,7 @@ impl PiparContractFactory {
             .iter()
             .position(|t| {
                 t.transaction_id == transaction_id
-                    && t.store_contract_id == env::predecessor_account_id()
+                    // && t.store_contract_id == env::predecessor_account_id()
                     && t.buyer_contract_id == buyer_contract_id
                     && t.approved == true
                     && t.shipped == false
