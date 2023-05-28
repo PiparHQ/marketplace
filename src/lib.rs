@@ -409,7 +409,7 @@ impl PiparContractFactory {
                     Promise::new(env::current_account_id())
                         .then(
                         Self::ext(env::current_account_id())
-                            .complete_purchase_callback(check_existing as u64),
+                            .complete_purchase_callback(check_existing.clone() as u64),
                     )
                 }
             }
