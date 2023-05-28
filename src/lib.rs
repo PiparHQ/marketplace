@@ -7,7 +7,7 @@ use near_sdk::{
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::{json};
 use near_sdk::{
-    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas, PanicOnDefault, Promise,
+    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas, PanicOnDefault, Promise, PromiseResult,
 };
 
 // Constants
@@ -19,7 +19,18 @@ pub const TGAS: u64 = 1_000_000_000_000;
 pub const fn tgas(n: u64) -> Gas {
     Gas(n * 10u64.pow(12))
 }
-pub const PGAS: Gas = tgas(65 + 5);
+pub const PGAS: Gas = tgas(35 + 5);
+
+#[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Eq, PartialEq, Clone, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub enum TransactionStatus {
+    Approved,
+    Shipped,
+    Delivered,
+    Disputed,
+    Canceled,
+}
 
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
@@ -34,13 +45,10 @@ pub struct Transaction {
     pub timeout: U128,
     pub is_discount: bool,
     pub is_reward: bool,
-    pub approved: bool,
-    pub shipped: bool,
-    pub delivered: bool,
-    pub disputed: bool,
-    pub canceled: bool,
+    pub status: TransactionStatus,
     pub hashed_billing_address: String,
-    pub nonce: String
+    pub nonce: String,
+    pub ipfs: String
 }
 
 #[near_bindgen]
@@ -81,6 +89,12 @@ pub struct FtData {
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
+pub struct EmptyData {
+}
+
+#[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
     product_id: U128,
     quantity: U128,
@@ -98,15 +112,18 @@ pub struct PiparContractFactory {
 #[near_bindgen]
 impl PiparContractFactory {
 
-    pub fn assert_no_store_with_id(&self, store_id: String) {
-        assert!(
-            !self.check_contains_store(store_id),
-            "Store with that ID already exists"
-        );
+    pub fn assert_no_store_with_id(&self, prefix: String) -> bool {
+        let current_account = env::current_account_id().to_string();
+        let account: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
+
+        return if !self.check_contains_store(prefix) && env::is_valid_account_id(account.as_bytes()) {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn assert_only_buyer(&self, buyer_account_id: AccountId) {
-        assert_one_yocto();
         assert_eq!(
             env::signer_account_id(),
             buyer_account_id,
@@ -115,20 +132,10 @@ impl PiparContractFactory {
     }
 
     pub fn assert_only_seller(&self, store_account_id: AccountId) {
-        assert_one_yocto();
         assert_eq!(
             env::signer_account_id(),
             store_account_id,
             "Only transaction seller can call this method"
-        )
-    }
-
-    pub fn account_name_is_valid(&self, prefix: String) {
-        let current_account = env::current_account_id().to_string();
-        let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
-        assert!(
-            env::is_valid_account_id(subaccount.as_bytes()),
-            "Account is invalid"
         )
     }
 
@@ -247,7 +254,7 @@ impl PiparContractFactory {
             STORE_BALANCE
         );
         self.assert_no_store_with_id(prefix.clone());
-        self.account_name_is_valid(prefix.clone());
+        self.assert_no_store_with_id(prefix.clone());
         assert_ne!(prefix.clone(), "market");
         assert_ne!(prefix.clone(), "pipar");
         assert_ne!(prefix.clone(), "dao");
@@ -355,13 +362,10 @@ impl PiparContractFactory {
                 timeout,
                 is_discount,
                 is_reward,
-                approved: true,
-                shipped: false,
-                delivered: false,
-                disputed: false,
-                canceled: false,
+                status: TransactionStatus::Approved,
                 hashed_billing_address,
-                nonce
+                nonce,
+                ipfs: String::from("")
             });
             env::log_str("Successful purchased product")
         } else {
@@ -382,11 +386,7 @@ impl PiparContractFactory {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
                     && t.buyer_contract_id == env::predecessor_account_id()
-                    && t.approved == true
-                    && t.shipped == true
-                    && t.delivered == false
-                    && t.disputed == false
-                    && t.canceled == false
+                    && t.status == TransactionStatus::Shipped
             })
             .unwrap_or_else(|| 11111111);
 
@@ -434,13 +434,10 @@ impl PiparContractFactory {
                             timeout: t.timeout,
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
-                            approved: t.approved,
-                            shipped: t.shipped,
-                            delivered: true,
-                            disputed: t.disputed,
-                            canceled: t.canceled,
+                            status: TransactionStatus::Delivered,
                             hashed_billing_address: t.hashed_billing_address,
-                            nonce: t.nonce
+                            nonce: t.nonce,
+                            ipfs: t.ipfs
                         },
                     );
                     let payout: u128 = t.buyer_value_locked.into();
@@ -464,11 +461,7 @@ impl PiparContractFactory {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
                     && t.buyer_contract_id == env::predecessor_account_id()
-                    && t.approved == true
-                    && t.shipped == true
-                    && t.delivered == false
-                    && t.disputed == false
-                    && t.canceled == false
+                    && t.status == TransactionStatus::Shipped
             })
             .unwrap_or_else(|| 11111111);
 
@@ -486,13 +479,10 @@ impl PiparContractFactory {
                         timeout: t.timeout,
                         is_discount: t.is_discount,
                         is_reward: t.is_reward,
-                        approved: t.approved,
-                        shipped: t.shipped,
-                        delivered: t.delivered,
-                        disputed: false,
-                        canceled: t.canceled,
+                        status: TransactionStatus::Disputed,
                         hashed_billing_address: t.hashed_billing_address,
-                        nonce: t.nonce
+                        nonce: t.nonce,
+                        ipfs: t.ipfs
                     },
                 );
                 env::log_str("Transaction has been marked disputed")
@@ -501,48 +491,70 @@ impl PiparContractFactory {
         }
     }
 
-    pub fn mark_shipped(&mut self, transaction_id: U128, buyer_contract_id: AccountId) {
+    pub fn mark_shipped(&mut self, transaction_id: U128, buyer_contract_id: AccountId, store_contract_id: AccountId, ipfs: String) -> Promise {
         let check_existing = self
             .transactions
             .iter()
             .position(|t| {
                 t.transaction_id == transaction_id
-                    // && t.store_contract_id == env::predecessor_account_id()
+                    && t.store_contract_id == store_contract_id
                     && t.buyer_contract_id == buyer_contract_id
-                    && t.approved == true
-                    && t.shipped == false
-                    && t.delivered == false
-                    && t.disputed == false
-                    && t.canceled == false
+                    && t.status == TransactionStatus::Approved
             })
             .unwrap_or_else(|| 11111111);
 
         match self.transactions.get(check_existing as u64) {
             Some(t) => {
-                self.transactions.replace(
-                    check_existing as u64,
-                    &Transaction {
-                        transaction_id: t.transaction_id,
-                        product_id: t.product_id,
-                        store_contract_id: t.store_contract_id,
-                        buyer_contract_id: t.buyer_contract_id,
-                        buyer_value_locked: t.buyer_value_locked,
-                        product_quantity: t.product_quantity,
-                        timeout: t.timeout,
-                        is_discount: t.is_discount,
-                        is_reward: t.is_reward,
-                        approved: t.approved,
-                        shipped: true,
-                        delivered: t.delivered,
-                        disputed: t.disputed,
-                        canceled: t.canceled,
-                        hashed_billing_address: t.hashed_billing_address,
-                        nonce: t.nonce
-                    },
-                );
-                env::log_str("Transaction has been marked shipped")
+                let args = serde_json::to_vec(&EmptyData {})
+                    .unwrap();
+                Promise::new(t.store_contract_id.clone())
+                    .function_call("assert_store_owner".to_owned(), args, NO_DEPOSIT, PGAS)
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .mark_shipped_callback(check_existing.clone() as u64, ipfs),
+                    )
             }
             None => panic!("Transaction not found"),
+        }
+    }
+
+    #[private]
+    pub fn mark_shipped_callback(&mut self, check_existing: u64, ipfs: String) {
+        assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(val) => {
+                let result: bool = serde_json::from_slice::<bool>(&*val).unwrap();
+                if result {
+                    match self.transactions.get(check_existing.clone() as u64) {
+                        Some(t) => {
+                            self.transactions.replace(
+                                check_existing as u64,
+                                &Transaction {
+                                    transaction_id: t.transaction_id,
+                                    product_id: t.product_id,
+                                    store_contract_id: t.store_contract_id,
+                                    buyer_contract_id: t.buyer_contract_id,
+                                    buyer_value_locked: t.buyer_value_locked,
+                                    product_quantity: t.product_quantity,
+                                    timeout: t.timeout,
+                                    is_discount: t.is_discount,
+                                    is_reward: t.is_reward,
+                                    status: TransactionStatus::Shipped,
+                                    hashed_billing_address: t.hashed_billing_address,
+                                    nonce: t.nonce,
+                                    ipfs
+                                },
+                            );
+                            env::log_str("Transaction has been marked shipped")
+                        }
+                        None => panic!("Transaction not found"),
+                    }
+                } else {
+                    env::panic_str("Product Marked shipped failed, please try again")
+                }
+            },
+            PromiseResult::Failed => env::panic_str("Product Marked shipped failed, please try again"),
         }
     }
 
@@ -554,11 +566,7 @@ impl PiparContractFactory {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
                     && t.buyer_contract_id == env::predecessor_account_id()
-                    && t.approved == true
-                    && t.shipped == false
-                    && t.delivered == false
-                    && t.disputed == false
-                    && t.canceled == false
+                    && t.status == TransactionStatus::Approved
             })
             .unwrap_or_else(|| 11111111);
 
