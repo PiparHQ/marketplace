@@ -45,6 +45,7 @@ pub struct Transaction {
     pub timeout: U128,
     pub is_discount: bool,
     pub is_reward: bool,
+    pub is_keypom: bool,
     pub status: TransactionStatus,
     pub hashed_billing_address: String,
     pub nonce: String,
@@ -284,6 +285,61 @@ impl PiparContractFactory {
     }
 
     #[payable]
+    pub fn keypom_buy(
+        &mut self,
+        product_id: U128,
+        store_contract_id: AccountId,
+        product_quantity: U128,
+        timeout: U128,
+        is_discount: bool,
+        is_reward: bool,
+        hashed_billing_address: String,
+        nonce: String,
+        keypom_id: AccountId,
+    ) -> Promise {
+        let check_existing = self
+            .transactions
+            .iter()
+            .position(|t| {
+                t.product_id == product_id
+                    && t.store_contract_id == store_contract_id
+                    && t.buyer_contract_id == keypom_id
+            })
+            .unwrap_or_else(|| 11111111);
+
+        match self.transactions.get(check_existing as u64) {
+            Some(t) => panic!("Cannot escrow buy twice on the same product with the same seller, you must complete one first: {:?}", t),
+            None => {
+                let args = serde_json::to_vec(&Buy {
+                    product_id: product_id.clone(),
+                    product_quantity: product_quantity.clone(),
+                    buyer_account_id: keypom_id.clone(),
+                    attached_near: env::attached_deposit().into(),
+                })
+                    .unwrap();
+                Promise::new(store_contract_id.clone())
+                    .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .buy_callback(
+                                keypom_id.clone(),
+                                U128::from(env::attached_deposit()),
+                                product_id.clone(),
+                                store_contract_id,
+                                product_quantity,
+                                timeout,
+                                is_discount,
+                                is_reward,
+                                true,
+                                hashed_billing_address,
+                                nonce,
+                            )
+                    )
+            }
+        }
+    }
+
+    #[payable]
     pub fn buy(
         &mut self,
         product_id: U128,
@@ -328,6 +384,7 @@ impl PiparContractFactory {
                                 timeout,
                                 is_discount,
                                 is_reward,
+                                false,
                                 hashed_billing_address,
                                 nonce,
                             )
@@ -347,6 +404,7 @@ impl PiparContractFactory {
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
+        is_keypom: bool,
         hashed_billing_address: String,
         nonce: String,
     ) {
@@ -362,6 +420,7 @@ impl PiparContractFactory {
                 timeout,
                 is_discount,
                 is_reward,
+                is_keypom,
                 status: TransactionStatus::Approved,
                 hashed_billing_address,
                 nonce,
@@ -434,6 +493,7 @@ impl PiparContractFactory {
                             timeout: t.timeout,
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
+                            is_keypom: t.is_keypom,
                             status: TransactionStatus::Delivered,
                             hashed_billing_address: t.hashed_billing_address,
                             nonce: t.nonce,
@@ -479,6 +539,7 @@ impl PiparContractFactory {
                         timeout: t.timeout,
                         is_discount: t.is_discount,
                         is_reward: t.is_reward,
+                        is_keypom: t.is_keypom,
                         status: TransactionStatus::Disputed,
                         hashed_billing_address: t.hashed_billing_address,
                         nonce: t.nonce,
@@ -540,6 +601,7 @@ impl PiparContractFactory {
                                     timeout: t.timeout,
                                     is_discount: t.is_discount,
                                     is_reward: t.is_reward,
+                                    is_keypom: t.is_keypom,
                                     status: TransactionStatus::Shipped,
                                     hashed_billing_address: t.hashed_billing_address,
                                     nonce: t.nonce,
