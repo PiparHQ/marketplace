@@ -1,18 +1,21 @@
 use near_sdk::{
     self,
     borsh::{self, BorshDeserialize, BorshSerialize},
-    collections::{LookupSet, Vector},
+    collections::{LookupSet, Vector, UnorderedMap},
     Balance, PublicKey,
 };
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::{json};
 use near_sdk::{
-    assert_one_yocto, env, is_promise_success, json_types::U128, near_bindgen, AccountId, Gas, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, is_promise_success, json_types::U128, json_types::U64, near_bindgen, AccountId, Gas, PanicOnDefault, Promise, PromiseResult,
 };
+
+use std::collections::HashMap;
 
 // Constants
 pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 pub const STORE_BALANCE: u128 = 10_000_000_000_000_000_000_000_000;
+pub const ONE_YOCTO: u128 = 10_000_000_000_000_000_000_000;
 pub const NO_DEPOSIT: Balance = 0;
 pub const TGAS: u64 = 1_000_000_000_000;
 
@@ -37,12 +40,13 @@ pub enum TransactionStatus {
 #[serde(crate = "near_sdk::serde")]
 pub struct Transaction {
     pub transaction_id: U128,
-    pub product_id: U128,
+    pub product_id: U64,
     pub store_contract_id: AccountId,
-    pub buyer_contract_id: AccountId,
+    pub buyer_id: AccountId,
     pub buyer_value_locked: U128,
-    pub product_quantity: U128,
+    pub token_id: String,
     pub timeout: U128,
+    pub affiliate: bool,
     pub is_discount: bool,
     pub is_reward: bool,
     pub is_keypom: bool,
@@ -66,11 +70,12 @@ pub struct KeypomArgs {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Buy {
-    product_id: U128,
-    product_quantity: U128,
-    buyer_account_id: AccountId,
+    id: U64,
+    receiver_id: AccountId,
     attached_near: U128,
+    // affiliate: Option<AccountId>
 }
+
 
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
@@ -82,23 +87,38 @@ pub struct Metadata {
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct FtData {
-    owner_id: AccountId,
-    contract_id: AccountId,
-}
-
-#[near_bindgen]
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
-#[serde(crate = "near_sdk::serde")]
 pub struct EmptyData {
 }
 
 #[near_bindgen]
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
+pub struct FtData {
+    owner_id: AccountId,
+    marketplace_contract_id: AccountId,
+    name: String,
+    symbol: String,
+    icon: String,
+    bg_icon: String,
+    category: String,
+    description: String,
+    facebook: String,
+    twitter: String,
+    instagram: String,
+    tiktok: String,
+    youtube: String,
+    zip: String,
+    city: String,
+    state: String,
+    country: String,
+}
+
+#[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
-    product_id: U128,
-    quantity: U128,
+    product_id: U64,
+    // quantity: U128,
     buyer_account_id: AccountId,
 }
 
@@ -108,6 +128,7 @@ pub struct PiparContractFactory {
     pub stores: LookupSet<String>,
     pub transactions: Vector<Transaction>,
     pub store_cost: U128,
+    pub stores_stats: UnorderedMap<AccountId, U128>,
 }
 
 #[near_bindgen]
@@ -169,7 +190,7 @@ impl PiparContractFactory {
     }
 
     pub fn get_buyer_transactions(&self, account_id: AccountId) -> Vec<Transaction> {
-        let transactions: Vec<Transaction> = self.transactions.iter().filter(|x| x.buyer_contract_id == account_id).collect();
+        let transactions: Vec<Transaction> = self.transactions.iter().filter(|x| x.buyer_id == account_id).collect();
 
         transactions
     }
@@ -186,6 +207,7 @@ impl PiparContractFactory {
             stores: LookupSet::new(b"s".to_vec()),
             transactions: Vector::new(b"v".to_vec()),
             store_cost: U128::from(STORE_BALANCE),
+            stores_stats: UnorderedMap::new(b"w".to_vec()),
         }
     }
 
@@ -195,6 +217,21 @@ impl PiparContractFactory {
         new_account_id: String,
         new_public_key: PublicKey,
         keypom_args: KeypomArgs,
+        name: String,
+        symbol: String,
+        icon: String,
+        bg_icon: String,
+        category: String,
+        description: String,
+        facebook: String,
+        twitter: String,
+        instagram: String,
+        tiktok: String,
+        youtube: String,
+        zip: String,
+        city: String,
+        state: String,
+        country: String
     ) -> Promise {
         let prefix = &new_account_id[0..new_account_id.len() - 8];
         let public_key: PublicKey = new_public_key;
@@ -203,7 +240,22 @@ impl PiparContractFactory {
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
             owner_id: new_account_id.parse().unwrap(),
-            contract_id: env::current_account_id(),
+            marketplace_contract_id: env::current_account_id(),
+            name,
+            symbol,
+            icon,
+            bg_icon,
+            category,
+            description,
+            facebook,
+            twitter,
+            instagram,
+            tiktok,
+            youtube,
+            zip,
+            city,
+            state,
+            country,
         })
         .unwrap();
 
@@ -212,7 +264,7 @@ impl PiparContractFactory {
             .add_full_access_key(public_key)
             .transfer(STORE_BALANCE)
             .deploy_contract(include_bytes!("../wasm/store.wasm").to_vec())
-            .function_call("new".to_owned(), init_args, NO_DEPOSIT, PGAS)
+            .function_call("new_default_meta".to_owned(), init_args, NO_DEPOSIT, PGAS)
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(Gas(5 * TGAS))
@@ -248,22 +300,52 @@ impl PiparContractFactory {
     }
 
     #[payable]
-    pub fn create_store(&mut self, prefix: String) -> Promise {
+    pub fn create_store(&mut self, prefix: String, name: String,
+                        symbol: String,
+                        icon: String,
+                        bg_icon: String,
+                        category: String,
+                        description: String,
+                        facebook: String,
+                        twitter: String,
+                        instagram: String,
+                        tiktok: String,
+                        youtube: String,
+                        zip: String,
+                        city: String,
+                        state: String,
+                        country: String) -> Promise {
         assert!(
-            env::attached_deposit() >= STORE_BALANCE,
+            env::attached_deposit() > STORE_BALANCE,
             "To cover the storage required for your store, you need to attach at least {} yoctoNEAR to this transaction.",
             STORE_BALANCE
         );
         self.assert_no_store_with_id(prefix.clone());
         self.assert_no_store_with_id(prefix.clone());
-        assert_ne!(prefix.clone(), "market");
-        assert_ne!(prefix.clone(), "pipar");
-        assert_ne!(prefix.clone(), "dao");
+        assert_ne!(prefix.clone(), "market", "cannot use name for store, choose another name");
+        assert_ne!(prefix.clone(), "pipar", "cannot use name for store, choose another name");
+        assert_ne!(prefix.clone(), "dao", "cannot use name for store, choose another name");
+        assert_ne!(prefix.clone(), "auction", "cannot use name for store, choose another name");
         let current_account = env::current_account_id().to_string();
         let subaccount: AccountId = format!("{prefix}.{current_account}").parse().unwrap();
         let init_args = serde_json::to_vec(&FtData {
             owner_id: env::signer_account_id(),
-            contract_id: env::current_account_id(),
+            marketplace_contract_id: env::current_account_id(),
+            name,
+            symbol,
+            icon,
+            bg_icon,
+            category,
+            description,
+            facebook,
+            twitter,
+            instagram,
+            tiktok,
+            youtube,
+            zip,
+            city,
+            state,
+            country,
         })
         .unwrap();
 
@@ -272,7 +354,7 @@ impl PiparContractFactory {
             .add_full_access_key(env::signer_account_pk())
             .transfer(STORE_BALANCE)
             .deploy_contract(include_bytes!("../wasm/store.wasm").to_vec())
-            .function_call("new".to_owned(), init_args, NO_DEPOSIT, PGAS)
+            .function_call("new_default_meta".to_owned(), init_args, NO_DEPOSIT, PGAS)
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(Gas(5 * TGAS))
@@ -287,9 +369,8 @@ impl PiparContractFactory {
     #[payable]
     pub fn keypom_buy(
         &mut self,
-        product_id: U128,
+        product_id: U64,
         store_contract_id: AccountId,
-        product_quantity: U128,
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
@@ -303,7 +384,7 @@ impl PiparContractFactory {
             .position(|t| {
                 t.product_id == product_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == keypom_id
+                    && t.buyer_id == keypom_id
             })
             .unwrap_or_else(|| 11111111);
 
@@ -311,14 +392,14 @@ impl PiparContractFactory {
             Some(t) => panic!("Cannot escrow buy twice on the same product with the same seller, you must complete one first: {:?}", t),
             None => {
                 let args = serde_json::to_vec(&Buy {
-                    product_id: product_id.clone(),
-                    product_quantity: product_quantity.clone(),
-                    buyer_account_id: keypom_id.clone(),
+                    id: product_id.clone(),
+                    receiver_id: keypom_id.clone(),
                     attached_near: env::attached_deposit().into(),
+                    // affiliate,
                 })
                     .unwrap();
                 Promise::new(store_contract_id.clone())
-                    .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                    .function_call("nft_mint".to_owned(), args, ONE_YOCTO, PGAS)
                     .then(
                         Self::ext(env::current_account_id())
                             .buy_callback(
@@ -326,7 +407,6 @@ impl PiparContractFactory {
                                 U128::from(env::attached_deposit()),
                                 product_id.clone(),
                                 store_contract_id,
-                                product_quantity,
                                 timeout,
                                 is_discount,
                                 is_reward,
@@ -342,14 +422,14 @@ impl PiparContractFactory {
     #[payable]
     pub fn buy(
         &mut self,
-        product_id: U128,
+        product_id: U64,
         store_contract_id: AccountId,
-        product_quantity: U128,
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
         nonce: String,
+        affiliate: Option<AccountId>
     ) -> Promise {
         let check_existing = self
             .transactions
@@ -357,7 +437,7 @@ impl PiparContractFactory {
             .position(|t| {
                 t.product_id == product_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.buyer_id == env::predecessor_account_id()
             })
             .unwrap_or_else(|| 11111111);
 
@@ -365,14 +445,14 @@ impl PiparContractFactory {
             Some(t) => panic!("Cannot escrow buy twice on the same product with the same seller, you must complete one first: {:?}", t),
             None => {
                 let args = serde_json::to_vec(&Buy {
-                    product_id: product_id.clone(),
-                    product_quantity: product_quantity.clone(),
-                    buyer_account_id: env::predecessor_account_id(),
+                    id: product_id.clone(),
+                    receiver_id: env::predecessor_account_id(),
                     attached_near: env::attached_deposit().into(),
+                    // affiliate,
                 })
                     .unwrap();
                 Promise::new(store_contract_id.clone())
-                    .function_call("store_purchase_product".to_owned(), args, NO_DEPOSIT, PGAS)
+                    .function_call("nft_mint".to_owned(), args, ONE_YOCTO, PGAS)
                     .then(
                         Self::ext(env::current_account_id())
                             .buy_callback(
@@ -380,7 +460,6 @@ impl PiparContractFactory {
                                 U128::from(env::attached_deposit()),
                                 product_id.clone(),
                                 store_contract_id,
-                                product_quantity,
                                 timeout,
                                 is_discount,
                                 is_reward,
@@ -398,9 +477,8 @@ impl PiparContractFactory {
         &mut self,
         buyer_account_id: AccountId,
         attached_deposit: U128,
-        product_id: U128,
+        product_id: U64,
         store_contract_id: AccountId,
-        product_quantity: U128,
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
@@ -412,12 +490,13 @@ impl PiparContractFactory {
         if is_promise_success() {
             self.transactions.push(&Transaction {
                 transaction_id: U128::from(env::block_timestamp() as u128),
-                product_id,
+                product_id: product_id,
                 store_contract_id,
-                buyer_contract_id: buyer_account_id,
+                buyer_id: buyer_account_id,
                 buyer_value_locked: attached_deposit.into(),
-                product_quantity,
+                token_id: "".to_string(),
                 timeout,
+                affiliate: false,
                 is_discount,
                 is_reward,
                 is_keypom,
@@ -444,7 +523,7 @@ impl PiparContractFactory {
             .position(|t| {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.buyer_id == env::predecessor_account_id()
                     && t.status == TransactionStatus::Shipped
             })
             .unwrap_or_else(|| 11111111);
@@ -454,8 +533,8 @@ impl PiparContractFactory {
                 if t.is_reward == true {
                     let args = serde_json::to_vec(&TokenData {
                         product_id: t.product_id,
-                        quantity: t.product_quantity,
-                        buyer_account_id: t.buyer_contract_id,
+                        // quantity: t.product_quantity,
+                        buyer_account_id: t.buyer_id,
                     })
                     .unwrap();
                     Promise::new(store_contract_id.clone())
@@ -487,10 +566,11 @@ impl PiparContractFactory {
                             transaction_id: t.transaction_id,
                             product_id: t.product_id,
                             store_contract_id: t.store_contract_id.clone(),
-                            buyer_contract_id: t.buyer_contract_id.clone(),
+                            buyer_id: t.buyer_id.clone(),
                             buyer_value_locked: t.buyer_value_locked,
-                            product_quantity: t.product_quantity,
+                            token_id: t.token_id,
                             timeout: t.timeout,
+                            affiliate: t.affiliate,
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
                             is_keypom: t.is_keypom,
@@ -520,7 +600,7 @@ impl PiparContractFactory {
             .position(|t| {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.buyer_id == env::predecessor_account_id()
                     && t.status == TransactionStatus::Shipped
             })
             .unwrap_or_else(|| 11111111);
@@ -533,10 +613,11 @@ impl PiparContractFactory {
                         transaction_id: t.transaction_id,
                         product_id: t.product_id,
                         store_contract_id: t.store_contract_id,
-                        buyer_contract_id: t.buyer_contract_id,
+                        buyer_id: t.buyer_id,
                         buyer_value_locked: t.buyer_value_locked,
-                        product_quantity: t.product_quantity,
+                        token_id: t.token_id,
                         timeout: t.timeout,
+                        affiliate: t.affiliate,
                         is_discount: t.is_discount,
                         is_reward: t.is_reward,
                         is_keypom: t.is_keypom,
@@ -552,14 +633,14 @@ impl PiparContractFactory {
         }
     }
 
-    pub fn mark_shipped(&mut self, transaction_id: U128, buyer_contract_id: AccountId, store_contract_id: AccountId, ipfs: String) -> Promise {
+    pub fn mark_shipped(&mut self, transaction_id: U128, buyer_id: AccountId, store_contract_id: AccountId, ipfs: String) -> Promise {
         let check_existing = self
             .transactions
             .iter()
             .position(|t| {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == buyer_contract_id
+                    && t.buyer_id == buyer_id
                     && t.status == TransactionStatus::Approved
             })
             .unwrap_or_else(|| 11111111);
@@ -595,10 +676,11 @@ impl PiparContractFactory {
                                     transaction_id: t.transaction_id,
                                     product_id: t.product_id,
                                     store_contract_id: t.store_contract_id,
-                                    buyer_contract_id: t.buyer_contract_id,
+                                    buyer_id: t.buyer_id,
                                     buyer_value_locked: t.buyer_value_locked,
-                                    product_quantity: t.product_quantity,
+                                    token_id: t.token_id,
                                     timeout: t.timeout,
+                                    affiliate: t.affiliate,
                                     is_discount: t.is_discount,
                                     is_reward: t.is_reward,
                                     is_keypom: t.is_keypom,
@@ -627,7 +709,7 @@ impl PiparContractFactory {
             .position(|t| {
                 t.transaction_id == transaction_id
                     && t.store_contract_id == store_contract_id
-                    && t.buyer_contract_id == env::predecessor_account_id()
+                    && t.buyer_id == env::predecessor_account_id()
                     && t.status == TransactionStatus::Approved
             })
             .unwrap_or_else(|| 11111111);
