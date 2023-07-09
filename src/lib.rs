@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 // Constants
 pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
-pub const STORE_BALANCE: u128 = 10_000_000_000_000_000_000_000_000;
+pub const STORE_BALANCE: u128 = 6_000_000_000_000_000_000_000_000;
 pub const ONE_YOCTO: u128 = 10_000_000_000_000_000_000_000;
 pub const NO_DEPOSIT: Balance = 0;
 pub const TGAS: u64 = 1_000_000_000_000;
@@ -44,9 +44,12 @@ pub struct Transaction {
     pub store_contract_id: AccountId,
     pub buyer_id: AccountId,
     pub buyer_value_locked: U128,
+    pub price: Balance,
     pub token_id: String,
     pub timeout: U128,
     pub affiliate: bool,
+    pub affiliate_id: Option<AccountId>,
+    pub affiliate_percentage: Option<u32>,
     pub is_discount: bool,
     pub is_reward: bool,
     pub is_keypom: bool,
@@ -73,7 +76,8 @@ pub struct Buy {
     id: U64,
     receiver_id: AccountId,
     attached_near: U128,
-    // affiliate: Option<AccountId>
+    color: String,
+    affiliate: Option<AccountId>
 }
 
 
@@ -118,8 +122,20 @@ pub struct FtData {
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
     product_id: U64,
-    // quantity: U128,
     buyer_account_id: AccountId,
+}
+
+#[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct MarketplaceData {
+    price: Balance,
+    affiliate: bool,
+    affiliate_id: Option<AccountId>,
+    affiliate_percentage: Option<u32>,
+    token_id: String,
+    token_owner: AccountId,
+    store_owner: AccountId,
 }
 
 #[near_bindgen]
@@ -371,11 +387,13 @@ impl PiparContractFactory {
         &mut self,
         product_id: U64,
         store_contract_id: AccountId,
+        color: String,
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
         hashed_billing_address: String,
         nonce: String,
+        affiliate: Option<AccountId>,
         keypom_id: AccountId,
     ) -> Promise {
         let check_existing = self
@@ -395,7 +413,8 @@ impl PiparContractFactory {
                     id: product_id.clone(),
                     receiver_id: keypom_id.clone(),
                     attached_near: env::attached_deposit().into(),
-                    // affiliate,
+                    color: color,
+                    affiliate: affiliate,
                 })
                     .unwrap();
                 Promise::new(store_contract_id.clone())
@@ -424,6 +443,7 @@ impl PiparContractFactory {
         &mut self,
         product_id: U64,
         store_contract_id: AccountId,
+        color: String,
         timeout: U128,
         is_discount: bool,
         is_reward: bool,
@@ -448,7 +468,8 @@ impl PiparContractFactory {
                     id: product_id.clone(),
                     receiver_id: env::predecessor_account_id(),
                     attached_near: env::attached_deposit().into(),
-                    // affiliate,
+                    color: color,
+                    affiliate: affiliate,
                 })
                     .unwrap();
                 Promise::new(store_contract_id.clone())
@@ -487,28 +508,38 @@ impl PiparContractFactory {
         nonce: String,
     ) {
         let attached_deposit: u128 = attached_deposit.into();
-        if is_promise_success() {
-            self.transactions.push(&Transaction {
-                transaction_id: U128::from(env::block_timestamp() as u128),
-                product_id: product_id,
-                store_contract_id,
-                buyer_id: buyer_account_id,
-                buyer_value_locked: attached_deposit.into(),
-                token_id: "".to_string(),
-                timeout,
-                affiliate: false,
-                is_discount,
-                is_reward,
-                is_keypom,
-                status: TransactionStatus::Approved,
-                hashed_billing_address,
-                nonce,
-                ipfs: String::from("")
-            });
-            env::log_str("Successful purchased product")
-        } else {
-            Promise::new(buyer_account_id).transfer(attached_deposit);
-            env::log_str("Product purchase failed, returning funds")
+        assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(val) => {
+                let result: MarketplaceData = serde_json::from_slice::<MarketplaceData>(&*val).unwrap();
+                if result {
+                    self.transactions.push(&Transaction {
+                        transaction_id: U128::from(env::block_timestamp() as u128),
+                        product_id: product_id,
+                        store_contract_id,
+                        buyer_id: buyer_account_id,
+                        buyer_value_locked: attached_deposit.into(),
+                        price: result.price,
+                        token_id: result.token_id,
+                        timeout,
+                        affiliate: result.affiliate,
+                        affiliate_id: result.affiliate_id,
+                        affiliate_percentage: result.affiliate_percentage,
+                        is_discount,
+                        is_reward,
+                        is_keypom,
+                        status: TransactionStatus::Approved,
+                        hashed_billing_address,
+                        nonce,
+                        ipfs: String::from("")
+                    });
+                    env::log_str("Successfully purchased product");
+                } else {
+                    env::log_str("Product purchase failed, returning funds")
+                }
+            },
+            PromiseResult::Failed => Promise::new(buyer_account_id).transfer(attached_deposit),
         }
     }
 
@@ -568,9 +599,12 @@ impl PiparContractFactory {
                             store_contract_id: t.store_contract_id.clone(),
                             buyer_id: t.buyer_id.clone(),
                             buyer_value_locked: t.buyer_value_locked,
+                            price: t.price,
                             token_id: t.token_id,
                             timeout: t.timeout,
                             affiliate: t.affiliate,
+                            affiliate_id: t.affiliate_id,
+                            affiliate_percentage: t.affiliate_percentage,
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
                             is_keypom: t.is_keypom,
@@ -583,7 +617,12 @@ impl PiparContractFactory {
                     let payout: u128 = t.buyer_value_locked.into();
                     let percent = payout as f64 * 0.98;
                     let seller_funds = percent as u128;
-                    Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
+                    if t.affiliate == true {
+                        let affiliate_payout = t.affiliate_percentage as f32;
+                        Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
+                    } else {
+                        Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
+                    }
                     env::log_str("Successful transaction completion")
                 }
                 None => panic!("Transaction not found"),
