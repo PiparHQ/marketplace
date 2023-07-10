@@ -121,8 +121,15 @@ pub struct FtData {
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TokenData {
-    product_id: U64,
-    buyer_account_id: AccountId,
+    id: U64,
+    receiver_id: AccountId,
+}
+
+#[near_bindgen]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Token {
+    token_id: String,
 }
 
 #[near_bindgen]
@@ -510,36 +517,36 @@ impl PiparContractFactory {
         let attached_deposit: u128 = attached_deposit.into();
         assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
         match env::promise_result(0) {
-            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::NotReady => {
+                unreachable!();
+        },
             PromiseResult::Successful(val) => {
                 let result: MarketplaceData = serde_json::from_slice::<MarketplaceData>(&*val).unwrap();
-                if result {
-                    self.transactions.push(&Transaction {
-                        transaction_id: U128::from(env::block_timestamp() as u128),
-                        product_id: product_id,
-                        store_contract_id,
-                        buyer_id: buyer_account_id,
-                        buyer_value_locked: attached_deposit.into(),
-                        price: result.price,
-                        token_id: result.token_id,
-                        timeout,
-                        affiliate: result.affiliate,
-                        affiliate_id: result.affiliate_id,
-                        affiliate_percentage: result.affiliate_percentage,
-                        is_discount,
-                        is_reward,
-                        is_keypom,
-                        status: TransactionStatus::Approved,
-                        hashed_billing_address,
-                        nonce,
-                        ipfs: String::from("")
-                    });
-                    env::log_str("Successfully purchased product");
-                } else {
-                    env::log_str("Product purchase failed, returning funds")
-                }
+                self.transactions.push(&Transaction {
+                    transaction_id: U128::from(env::block_timestamp() as u128),
+                    product_id: product_id,
+                    store_contract_id,
+                    buyer_id: buyer_account_id,
+                    buyer_value_locked: attached_deposit.into(),
+                    price: result.price,
+                    token_id: result.token_id,
+                    timeout,
+                    affiliate: result.affiliate,
+                    affiliate_id: result.affiliate_id,
+                    affiliate_percentage: result.affiliate_percentage,
+                    is_discount,
+                    is_reward,
+                    is_keypom,
+                    status: TransactionStatus::Approved,
+                    hashed_billing_address,
+                    nonce,
+                    ipfs: String::from("")
+                });
+                env::log_str("Successfully purchased product");
             },
-            PromiseResult::Failed => Promise::new(buyer_account_id).transfer(attached_deposit),
+            PromiseResult::Failed => {
+                Promise::new(buyer_account_id).transfer(attached_deposit);
+            },
         }
     }
 
@@ -563,9 +570,8 @@ impl PiparContractFactory {
             Some(t) => {
                 if t.is_reward == true {
                     let args = serde_json::to_vec(&TokenData {
-                        product_id: t.product_id,
-                        // quantity: t.product_quantity,
-                        buyer_account_id: t.buyer_id,
+                        id: t.product_id,
+                        receiver_id: t.buyer_id,
                     })
                     .unwrap();
                     Promise::new(store_contract_id.clone())
@@ -600,11 +606,11 @@ impl PiparContractFactory {
                             buyer_id: t.buyer_id.clone(),
                             buyer_value_locked: t.buyer_value_locked,
                             price: t.price,
-                            token_id: t.token_id,
+                            token_id: t.token_id.clone(),
                             timeout: t.timeout,
-                            affiliate: t.affiliate,
-                            affiliate_id: t.affiliate_id,
-                            affiliate_percentage: t.affiliate_percentage,
+                            affiliate: t.affiliate.clone(),
+                            affiliate_id: t.affiliate_id.clone(),
+                            affiliate_percentage: t.affiliate_percentage.clone(),
                             is_discount: t.is_discount,
                             is_reward: t.is_reward,
                             is_keypom: t.is_keypom,
@@ -617,11 +623,22 @@ impl PiparContractFactory {
                     let payout: u128 = t.buyer_value_locked.into();
                     let percent = payout as f64 * 0.98;
                     let seller_funds = percent as u128;
-                    if t.affiliate == true {
-                        let affiliate_payout = t.affiliate_percentage as f32;
-                        Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
-                    } else {
-                        Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
+                    if let Some(affix) = t.affiliate_id.clone() {
+                        if t.affiliate == true {
+                            let args = serde_json::to_vec(&Token {
+                                token_id: t.token_id.clone(),
+                            })
+                                .unwrap();
+                            let percentage = t.affiliate_percentage.unwrap_or(0);
+                            let affiliate_payout = seller_funds as f64 / 100.0 * percentage as f64;
+                            Promise::new(t.store_contract_id.clone()).transfer(seller_funds - affiliate_payout as Balance)
+                                .function_call("unlock_token".to_owned(), args, NO_DEPOSIT, PGAS)
+                                .then(
+                                    Promise::new(affix).transfer(affiliate_payout as Balance)
+                                );
+                        } else {
+                            Promise::new(t.store_contract_id.clone()).transfer(seller_funds);
+                        }
                     }
                     env::log_str("Successful transaction completion")
                 }
@@ -654,9 +671,12 @@ impl PiparContractFactory {
                         store_contract_id: t.store_contract_id,
                         buyer_id: t.buyer_id,
                         buyer_value_locked: t.buyer_value_locked,
+                        price: t.price,
                         token_id: t.token_id,
                         timeout: t.timeout,
                         affiliate: t.affiliate,
+                        affiliate_id: t.affiliate_id,
+                        affiliate_percentage: t.affiliate_percentage,
                         is_discount: t.is_discount,
                         is_reward: t.is_reward,
                         is_keypom: t.is_keypom,
@@ -717,9 +737,12 @@ impl PiparContractFactory {
                                     store_contract_id: t.store_contract_id,
                                     buyer_id: t.buyer_id,
                                     buyer_value_locked: t.buyer_value_locked,
+                                    price: t.price,
                                     token_id: t.token_id,
                                     timeout: t.timeout,
                                     affiliate: t.affiliate,
+                                    affiliate_id: t.affiliate_id,
+                                    affiliate_percentage: t.affiliate_percentage,
                                     is_discount: t.is_discount,
                                     is_reward: t.is_reward,
                                     is_keypom: t.is_keypom,
