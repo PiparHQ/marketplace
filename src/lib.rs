@@ -5,16 +5,13 @@ use near_sdk::{
     Balance, PublicKey,
 };
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::serde_json::{json};
 use near_sdk::{
-    assert_one_yocto, env, is_promise_success, json_types::U128, json_types::U64, near_bindgen, AccountId, Gas, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, is_promise_success, json_types::U128, json_types::U64, near_bindgen, AccountId, Gas, PanicOnDefault, Promise, PromiseResult, serde_json::json
 };
-
-use std::collections::HashMap;
 
 // Constants
 pub const ONE_NEAR: u128 = 1_000_000_000_000_000_000_000_000;
-pub const STORE_BALANCE: u128 = 6_000_000_000_000_000_000_000_000;
+pub const STORE_BALANCE: u128 = 7_000_000_000_000_000_000_000_000;
 pub const ONE_YOCTO: u128 = 10_000_000_000_000_000_000_000;
 pub const NO_DEPOSIT: Balance = 0;
 pub const TGAS: u64 = 1_000_000_000_000;
@@ -75,9 +72,9 @@ pub struct KeypomArgs {
 pub struct Buy {
     id: U64,
     receiver_id: AccountId,
-    attached_near: U128,
+    attached_deposit: U128,
     color: String,
-    affiliate: Option<AccountId>
+    affiliate: Option<AccountId>,
 }
 
 
@@ -133,7 +130,7 @@ pub struct Token {
 }
 
 #[near_bindgen]
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MarketplaceData {
     price: Balance,
@@ -419,7 +416,7 @@ impl PiparContractFactory {
                 let args = serde_json::to_vec(&Buy {
                     id: product_id.clone(),
                     receiver_id: keypom_id.clone(),
-                    attached_near: env::attached_deposit().into(),
+                    attached_deposit: env::attached_deposit().into(),
                     color: color,
                     affiliate: affiliate,
                 })
@@ -474,7 +471,7 @@ impl PiparContractFactory {
                 let args = serde_json::to_vec(&Buy {
                     id: product_id.clone(),
                     receiver_id: env::predecessor_account_id(),
-                    attached_near: env::attached_deposit().into(),
+                    attached_deposit: env::attached_deposit().into(),
                     color: color,
                     affiliate: affiliate,
                 })
@@ -520,29 +517,32 @@ impl PiparContractFactory {
             PromiseResult::NotReady => {
                 unreachable!();
         },
-            PromiseResult::Successful(val) => {
-                let result: MarketplaceData = serde_json::from_slice::<MarketplaceData>(&*val).unwrap();
-                self.transactions.push(&Transaction {
-                    transaction_id: U128::from(env::block_timestamp() as u128),
-                    product_id: product_id,
-                    store_contract_id,
-                    buyer_id: buyer_account_id,
-                    buyer_value_locked: attached_deposit.into(),
-                    price: result.price,
-                    token_id: result.token_id,
-                    timeout,
-                    affiliate: result.affiliate,
-                    affiliate_id: result.affiliate_id,
-                    affiliate_percentage: result.affiliate_percentage,
-                    is_discount,
-                    is_reward,
-                    is_keypom,
-                    status: TransactionStatus::Approved,
-                    hashed_billing_address,
-                    nonce,
-                    ipfs: String::from("")
-                });
-                env::log_str("Successfully purchased product");
+            PromiseResult::Successful(value) => {
+                if let Ok(result) = serde_json::from_slice::<MarketplaceData>(&*value) {
+                    self.transactions.push(&Transaction {
+                        transaction_id: U128::from(env::block_timestamp() as u128),
+                        product_id: product_id,
+                        store_contract_id,
+                        buyer_id: buyer_account_id,
+                        buyer_value_locked: attached_deposit.into(),
+                        price: result.price,
+                        token_id: result.token_id,
+                        timeout,
+                        affiliate: result.affiliate,
+                        affiliate_id: result.affiliate_id,
+                        affiliate_percentage: result.affiliate_percentage,
+                        is_discount,
+                        is_reward,
+                        is_keypom,
+                        status: TransactionStatus::Approved,
+                        hashed_billing_address,
+                        nonce,
+                        ipfs: String::from(""),
+                    });
+                    env::log_str("Successfully purchased product");
+                } else {
+                    env::log_str("The batch call failed and all calls got reverted")
+                }
             },
             PromiseResult::Failed => {
                 Promise::new(buyer_account_id).transfer(attached_deposit);
