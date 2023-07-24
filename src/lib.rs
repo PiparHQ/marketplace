@@ -510,7 +510,7 @@ impl PiparContractFactory {
         is_keypom: bool,
         hashed_billing_address: String,
         nonce: String,
-    ) {
+    ) -> Option<MarketplaceData> {
         let attached_deposit: u128 = attached_deposit.into();
         assert_eq!(env::promise_results_count(), 1, "ERR_TOO_MANY_RESULTS");
         match env::promise_result(0) {
@@ -518,7 +518,7 @@ impl PiparContractFactory {
                 unreachable!();
         },
             PromiseResult::Successful(value) => {
-                if let Ok(result) = serde_json::from_slice::<MarketplaceData>(&*value) {
+                if let Ok(result) = serde_json::from_slice::<MarketplaceData>(&value) {
                     self.transactions.push(&Transaction {
                         transaction_id: U128::from(env::block_timestamp() as u128),
                         product_id: product_id,
@@ -540,12 +540,15 @@ impl PiparContractFactory {
                         ipfs: String::from(""),
                     });
                     env::log_str("Successfully purchased product");
+                    Some(result.clone())
                 } else {
-                    env::log_str("The batch call failed and all calls got reverted")
+                    env::log_str("The batch call failed and all calls got reverted");
+                    None
                 }
             },
             PromiseResult::Failed => {
                 Promise::new(buyer_account_id).transfer(attached_deposit);
+                None
             },
         }
     }
