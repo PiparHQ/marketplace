@@ -130,7 +130,7 @@ pub struct Token {
 }
 
 #[near_bindgen]
-#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug)]
+#[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Debug, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MarketplaceData {
     price: Balance,
@@ -525,12 +525,12 @@ impl PiparContractFactory {
                         store_contract_id,
                         buyer_id: buyer_account_id,
                         buyer_value_locked: attached_deposit.into(),
-                        price: result.price,
-                        token_id: result.token_id,
+                        price: result.price.clone(),
+                        token_id: result.token_id.clone(),
                         timeout,
-                        affiliate: result.affiliate,
-                        affiliate_id: result.affiliate_id,
-                        affiliate_percentage: result.affiliate_percentage,
+                        affiliate: result.affiliate.clone(),
+                        affiliate_id: result.affiliate_id.clone(),
+                        affiliate_percentage: result.affiliate_percentage.clone(),
                         is_discount,
                         is_reward,
                         is_keypom,
